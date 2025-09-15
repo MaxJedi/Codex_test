@@ -34,7 +34,7 @@ uvicorn app.main:app --reload
 
 ## Запуск CLI
 ```
-python -m app.cli search --topic "айфон лайфхаки" --n 5 --region RU --after "2025-08-01T00:00:00Z" --shorts true
+python -m app.cli search --topic "айфон лайфхаки" --n 5 --region RU --after "2025-08-01T00:00:00Z" --no-shorts
 python -m app.cli analyze --video-id YyyZzz123
 python -m app.cli scenario --video-id YyyZzz123 --topic "айфон лайфхаки"
 python -m app.cli storyboard --scenario path/to/scenario.json --target shorts
