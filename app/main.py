@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from . import youtube_client, media_probe, stt, vision_shots, llm_scenario, llm_storyboard
-from .schemas import Candidate, Transcript, Shot, Scenario, Storyboard
+from .schemas import Candidate, Transcript, Shot, Scenario, Storyboard, AnalysisResult
 from .settings import settings
 
 app = FastAPI()
@@ -24,8 +24,8 @@ def search(payload: dict):
     return youtube_client.search_trending(topic, n, region, published_after, shorts)
 
 
-@app.post("/analyze")
-def analyze(payload: dict):
+@app.post("/analyze", response_model=AnalysisResult)
+def analyze(payload: dict) -> AnalysisResult:
     video_id = payload.get("video_id")
     if not video_id:
         raise HTTPException(400, "video_id required")
@@ -37,7 +37,7 @@ def analyze(payload: dict):
             shots = vision_shots.detect_shots(video_path)
         else:
             shots = []
-    return {"transcript": transcript, "shots": shots}
+    return AnalysisResult(transcript=transcript, shots=shots)
 
 
 @app.post("/scenario", response_model=Scenario)
@@ -47,8 +47,8 @@ def scenario(payload: dict):
     if not video_id or not topic:
         raise HTTPException(400, "video_id and topic required")
     analysis = analyze({"video_id": video_id})
-    transcript = Transcript.model_validate(analysis["transcript"])
-    shots = [Shot.model_validate(s) for s in analysis["shots"]]
+    transcript = analysis.transcript
+    shots = analysis.shots
     return llm_scenario.make_ru_scenario(transcript, shots, topic)
 
 
