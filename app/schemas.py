@@ -29,6 +29,11 @@ class Shot(BaseModel):
     end_sec: float = Field(ge=0)
 
 
+class AnalysisResult(BaseModel):
+    transcript: Transcript
+    shots: List[Shot]
+
+
 class VoiceLine(BaseModel):
     role: str
     text: str
