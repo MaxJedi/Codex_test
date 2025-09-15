@@ -41,8 +41,18 @@ def main():
     p_search.add_argument('--n', type=int, default=5)
     p_search.add_argument('--region', required=True)
     p_search.add_argument('--after', required=True)
-    p_search.add_argument('--shorts', action='store_true', default=True)
-    p_search.add_argument('--no-shorts', dest='shorts', action='store_false')
+    p_search.add_argument(
+        '--shorts',
+        action='store_true',
+        default=True,
+        help='Включать YouTube Shorts (по умолчанию)'
+    )
+    p_search.add_argument(
+        '--no-shorts',
+        dest='shorts',
+        action='store_false',
+        help='Исключить YouTube Shorts из результатов'
+    )
     p_search.set_defaults(func=cmd_search)
 
     p_an = sub.add_parser('analyze')

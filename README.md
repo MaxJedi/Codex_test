@@ -40,6 +40,8 @@ python -m app.cli scenario --video-id YyyZzz123 --topic "айфон лайфха
 python -m app.cli storyboard --scenario path/to/scenario.json --target shorts
 ```
 
+Флаг `--shorts` включён по умолчанию и оставляет подборку роликов YouTube Shorts. Используйте `--no-shorts`, чтобы исключить Shorts из выдачи поиска.
+
 ## Тесты
 ```
 CI=true pytest
