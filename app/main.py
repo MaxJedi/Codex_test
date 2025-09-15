@@ -34,10 +34,10 @@ def analyze(payload: dict) -> AnalysisResult:
             raise HTTPException(500, "Audio not extracted")
         transcript = stt.transcribe(audio_path)
         if video_path:
-            shots = vision_shots.detect_shots(video_path)
+            shots, key_objects = vision_shots.detect_shots(video_path)
         else:
-            shots = []
-    return AnalysisResult(transcript=transcript, shots=shots)
+            shots, key_objects = [], []
+    return AnalysisResult(transcript=transcript, shots=shots, key_objects=key_objects)
 
 
 @app.post("/scenario", response_model=Scenario)

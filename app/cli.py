@@ -12,14 +12,27 @@ def cmd_search(args):
 def cmd_analyze(args):
     with media_probe.pull_transient(args.video_id) as (audio_path, video_path):
         transcript = stt.transcribe(audio_path)
-        shots = vision_shots.detect_shots(video_path) if video_path else []
-    print(json.dumps({"transcript": transcript.model_dump(), "shots": [s.model_dump() for s in shots]}, ensure_ascii=False, indent=2))
+        if video_path:
+            shots, key_objects = vision_shots.detect_shots(video_path)
+        else:
+            shots, key_objects = [], []
+    print(
+        json.dumps(
+            {
+                "transcript": transcript.model_dump(),
+                "shots": [s.model_dump() for s in shots],
+                "key_objects": [ko.model_dump() for ko in key_objects],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 def cmd_scenario(args):
     with media_probe.pull_transient(args.video_id) as (audio_path, video_path):
         transcript = stt.transcribe(audio_path)
-        shots = vision_shots.detect_shots(video_path) if video_path else []
+        shots, _ = vision_shots.detect_shots(video_path) if video_path else ([], [])
     scn = llm_scenario.make_ru_scenario(transcript, shots, args.topic)
     print(scn.model_dump_json(indent=2, ensure_ascii=False))
 

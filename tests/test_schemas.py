@@ -9,6 +9,7 @@ from app.schemas import (
     StoryScene,
     Transcript,
     Shot,
+    KeyObject,
     AnalysisResult,
 )
 
@@ -44,6 +45,8 @@ def test_analysis_result_model():
     res = AnalysisResult(
         transcript=Transcript(segments=[]),
         shots=[Shot(start_sec=0.0, end_sec=1.0)],
+        key_objects=[KeyObject(description="Car", start_sec=0.0, end_sec=1.0, confidence=0.9, categories=["Vehicle"])],
     )
     assert res.transcript.segments == []
     assert res.shots[0].start_sec == 0.0
+    assert res.key_objects[0].categories == ["Vehicle"]
