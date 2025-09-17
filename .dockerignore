@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Git
+.git
+.gitignore
+
+# Tests
+.pytest_cache
+tests/
+
+# Documentation
+docs/
+README.md
+
+# IDE
+.idea/
+.vscode/
+
+# Project specific
+*.log
+.DS_Store
+
+data/
+docker-compose.yml
+docker
+logs
