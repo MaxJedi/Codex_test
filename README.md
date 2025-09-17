@@ -26,6 +26,16 @@ OPENAI_MAX_RETRIES=2
 pip install -r requirements.txt
 ```
 
+3. Поместите секретные файлы в папку `secrets/`:
+```
+secrets/
+├── gcp_sa.json           # Google Cloud Service Account (для Vision API)
+├── secret.json           # Другие секретные данные
+└── secret2.json          # Дополнительные секреты
+```
+
+**Примечание:** Папка `secrets/` автоматически создается при запуске приложения и исключена из git.
+
 ## Настройка Cobalt для скачивания видео
 
 Проект использует [Cobalt](https://github.com/wukko/cobalt) для скачивания видео с YouTube.
