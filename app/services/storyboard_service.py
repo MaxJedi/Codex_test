@@ -10,7 +10,7 @@ client = OpenAI(api_key=settings.OPENAI_API_KEY)
 SYSTEM_PROMPT = (
     "Ты режиссер монтажа. На основе сценария верни STRICT JSON по схеме Storyboard."
     " Учитывай темп, b-roll и транзишны."
-)
+)  
 
 
 def plan_timeline(scn: Scenario, target: Literal["shorts", "youtube"]) -> Storyboard:
