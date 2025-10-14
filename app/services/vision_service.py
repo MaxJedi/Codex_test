@@ -74,10 +74,10 @@ def detect_shots(file_path: str) -> Tuple[List[Shot], List[KeyObject]]:
     system_prompt = (
         "Analyze provided video frames. Return STRICT JSON with keys 'shots' and 'key_objects'. \n"
         "shots: list of objects: {start_sec: number, end_sec: number}. \n"
-        "key_objects: list of objects: {description: string, start_sec: number, end_sec: number, confidence: number (0..1), categories: string[]}\n"
+        "key_objects: list of objects: {description: string, start_sec: number, end_sec: number, confidence: number (0..1), categories: string[]}. \n"
+        "In 'key_objects', include any prominently featured objects, characters (with notable expressions), or important background elements. Use descriptive labels and appropriate categories (e.g., 'person', 'animal', 'vehicle', 'environment'). \n"
         "Estimate timestamps based on frame index and fps=" + str(fps) + ". If unsure, keep empty lists."
     )
-
     # Build chat-completions with vision
     message_content = [{"type": "text", "text": system_prompt}]
     step = max(1, len(base64_frames) // max(1, min(len(base64_frames), max_frames)))

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import Scenario, Storyboard
-from app.services import make_ru_scenario, plan_timeline
+from app.schemas.content import Scenario, Storyboard, GeneratedVideo
+from app.services import make_ru_scenario, plan_timeline, RunwayVideoService
 from app.routers.media import analyze
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -20,7 +20,6 @@ def scenario(payload: dict):
     key_objects = analysis.key_objects
     return make_ru_scenario(transcript, shots, topic, key_objects)
 
-
 @router.post("/storyboard", response_model=Storyboard)
 def storyboard(payload: dict):
     scenario_data = payload.get("scenario")
@@ -30,3 +29,17 @@ def storyboard(payload: dict):
     
     scn = Scenario.model_validate(scenario_data)
     return plan_timeline(scn, target)
+
+
+@router.post("/video", response_model=GeneratedVideo)
+def generate_video(payload: dict) -> GeneratedVideo:
+    scenario_data = payload.get("scenario")
+    duration = int(payload.get("duration", 5))
+    ratio = payload.get("ratio", "1280:720")
+    if not scenario_data:
+        raise HTTPException(400, "scenario required")
+
+    scn = Scenario.model_validate(scenario_data)
+    svc = RunwayVideoService()
+    result = svc.generate_from_text(scn, duration=8, ratio=ratio)
+    return GeneratedVideo(task_id=result.task_id, status=result.status, url=result.output_url)

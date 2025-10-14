@@ -34,3 +34,9 @@ class Storyboard(BaseModel):
     scenes: List[StoryScene]
     total_duration_sec: int
     target: Literal["shorts", "youtube"]
+
+
+class GeneratedVideo(BaseModel):
+    task_id: str
+    status: str
+    url: str | None = None

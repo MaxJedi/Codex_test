@@ -4,7 +4,7 @@ from app.services.vision_service import detect_shots
 from app.services.scenario_service import make_ru_scenario
 from app.services.storyboard_service import plan_timeline
 from app.services.storage_service import ensure_data_dir, save_json, read_json
-
+from app.services.runway_service import RunwayVideoService
 __all__ = [
     "search_trending",
     "transcribe", 
@@ -13,5 +13,7 @@ __all__ = [
     "plan_timeline",
     "ensure_atusgit _dir",
     "save_json",
-    "read_json"
+    "read_json",
+    "RunwayVideoService"
+    
 ]

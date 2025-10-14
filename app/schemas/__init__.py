@@ -1,9 +1,9 @@
 from app.schemas.youtube import Candidate
 from app.schemas.media import Segment, Transcript, Shot, KeyObject, AnalysisResult
-from app.schemas.content import VoiceLine, Scene, ScenarioMeta, Scenario, StoryScene, Storyboard
+from app.schemas.content import VoiceLine, Scene, ScenarioMeta, Scenario, StoryScene, Storyboard, GeneratedVideo
 
 __all__ = [
     "Candidate",
     "Segment", "Transcript", "Shot", "KeyObject", "AnalysisResult",
-    "VoiceLine", "Scene", "ScenarioMeta", "Scenario", "StoryScene", "Storyboard"
+    "VoiceLine", "Scene", "ScenarioMeta", "Scenario", "StoryScene", "Storyboard", "GeneratedVideo"
 ]

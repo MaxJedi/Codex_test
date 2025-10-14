@@ -15,8 +15,9 @@ class Settings(BaseSettings):
     COBALT_VIDEO_QUALITY: str = Field(default='720', env='COBALT_VIDEO_QUALITY')
     # OPENAI_HTTP_PROXY: str | None = Field(default=None, env='OPENAI_HTTP_PROXY')
     # OPENAI_HTTPS_PROXY: str | None = "https://sfYQ16:Uf3L4s@168.80.83.91:8000/"
-    OPENAI_TIMEOUT_SECONDS: int = Field(default=350, env='OPENAI_TIMEOUT_SECONDS')
+    OPENAI_TIMEOUT_SECONDS: int = Field(default=700, env='OPENAI_TIMEOUT_SECONDS')
     OPENAI_MAX_RETRIES: int = Field(default=2, env='OPENAI_MAX_RETRIES')
+    RUNWAY_API_KEY: str
 
     class Config:
         env_file = '.env'
