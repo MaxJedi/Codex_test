@@ -4,6 +4,7 @@ from app.services.vision_service import detect_shots
 from app.services.scenario_service import make_ru_scenario
 from app.services.storyboard_service import plan_timeline
 from app.services.storage_service import ensure_data_dir, save_json, read_json
+from app.services.media_assembly_service import compose_video_from_frames, concatenate_videos_in_dir
 from app.services.runway_service import RunwayVideoService
 __all__ = [
     "search_trending",
@@ -14,6 +15,9 @@ __all__ = [
     "ensure_atusgit _dir",
     "save_json",
     "read_json",
-    "RunwayVideoService"
+    "RunwayVideoService",
+    "compose_video_from_frames"
+    ,
+    "concatenate_videos_in_dir"
     
 ]

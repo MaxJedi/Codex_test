@@ -1,6 +1,13 @@
 import argparse
 import json
-from .services import search_trending, transcribe, detect_shots, make_ru_scenario, plan_timeline
+from .services import (
+    search_trending,
+    transcribe,
+    detect_shots,
+    make_ru_scenario,
+    plan_timeline,
+    compose_video_from_frames,
+)
 from .integrations import cobalt
 from .schemas import Scenario
 
@@ -14,7 +21,7 @@ def cmd_analyze(args):
     with cobalt.pull_transient(args.video_id) as (audio_path, video_path):
         transcript = transcribe(audio_path)
         if video_path:
-            shots, key_objects = detect_shots(video_path)
+            shots, key_objects = detect_shots(video_path, args.video_id)
         else:
             shots, key_objects = [], []
     print(
@@ -44,6 +51,11 @@ def cmd_storyboard(args):
     scn = Scenario.model_validate(scn_data)
     board = plan_timeline(scn, args.target)
     print(board.model_dump_json(indent=2, ensure_ascii=False))
+
+
+def cmd_compose_frames(args):
+    path = compose_video_from_frames(args.video_id, fps=args.fps, output_name=args.output)
+    print(json.dumps({"output": path}, ensure_ascii=False))
 
 
 def main():
@@ -82,6 +94,12 @@ def main():
     p_sb.add_argument('--scenario', required=True)
     p_sb.add_argument('--target', choices=['shorts', 'youtube'], required=True)
     p_sb.set_defaults(func=cmd_storyboard)
+
+    p_comp = sub.add_parser('compose-frames')
+    p_comp.add_argument('--video-id', required=True)
+    p_comp.add_argument('--fps', type=int, default=12)
+    p_comp.add_argument('--output', default='frames_compose.mp4')
+    p_comp.set_defaults(func=cmd_compose_frames)
 
     args = parser.parse_args()
     if not hasattr(args, 'func'):

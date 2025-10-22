@@ -71,6 +71,40 @@ class RunwayIntegration:
             raw=getattr(task, "__dict__", {}) or {}
         )
 
+    def text_to_image(
+        self,
+        prompt_text: str,
+        *,
+        model: str | None = None,
+        ratio: str = "1920:1080",
+        reference_images: list[dict[str, str]] | None = None,
+    ) -> RunwayTaskResult:
+        model = model or settings.__dict__.get("RUNWAY_MODEL_TEXT_TO_IMAGE", "gen4_image")
+        if not isinstance(prompt_text, str):
+            try:
+                import json as _json
+                prompt_text = _json.dumps(prompt_text, ensure_ascii=False)
+            except Exception:
+                prompt_text = str(prompt_text)
+        try:
+            task = (
+                self._client.text_to_image.create(
+                    model=model,
+                    ratio=ratio,
+                    prompt_text=prompt_text,
+                    reference_images=reference_images or None,
+                ).wait_for_task_output()
+            )
+        except TaskFailedError as e:
+            raise RuntimeError(f"Runway task failed: {e}")
+
+        return RunwayTaskResult(
+            task_id=str(getattr(task, "id", "")),
+            status=str(getattr(task, "status", "unknown")),
+            output_url=self._extract_output_url(task),
+            raw=getattr(task, "__dict__", {}) or {}
+        )
+
     def image_and_text_to_video(
         self,
         image_path: str,

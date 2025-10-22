@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     OPENAI_TIMEOUT_SECONDS: int = Field(default=700, env='OPENAI_TIMEOUT_SECONDS')
     OPENAI_MAX_RETRIES: int = Field(default=2, env='OPENAI_MAX_RETRIES')
     RUNWAY_API_KEY: str
+    
+    DATA_DIR: str = Field(default='data', env='DATA_DIR')
+    FRAMES_DIR: str = Field(default='frames', env='FRAMES_DIR')
+    VIDEO_SHOTS_DIRNAME: str = Field(default='video_shots', env='VIDEO_SHOTS_DIRNAME')
+    IMAGES_DIRNAME: str = Field(default='images', env='IMAGES_DIRNAME')
 
     class Config:
         env_file = '.env'

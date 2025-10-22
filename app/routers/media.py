@@ -27,7 +27,7 @@ def analyze(payload: dict) -> AnalysisResult:
     save_json(os.path.join(out_dir, "transcript.json"), transcript.model_dump())
     
     if video_path:
-        shots, key_objects = detect_shots(video_path)
+        shots, key_objects = detect_shots(video_path, video_id)
     else:
         shots, key_objects = [], []
     

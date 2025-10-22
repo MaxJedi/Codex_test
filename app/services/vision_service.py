@@ -11,6 +11,7 @@ import shutil
 
 from app.schemas import Shot, KeyObject
 from app.core.settings import settings
+from app.services.storage_service import get_frames_dir, ensure_dir
 
 
 def _encode_image(path: str) -> str:
@@ -18,10 +19,29 @@ def _encode_image(path: str) -> str:
         return base64.b64encode(f.read()).decode("ascii")
 
 
-def _extract_frames(file_path: str, fps: int, max_frames: int) -> List[str]:
-    tmpdir = tempfile.mkdtemp(prefix="frames_")
-    try:
+def _extract_frames(
+    file_path: str,
+    fps: int,
+    max_frames: int,
+    dest_dir: str | None = None,
+) -> Tuple[List[str], List[str]]:
+    """Extract frames with ffmpeg.
+
+    If dest_dir is provided, frames are written there as frame_00001.jpg etc and kept.
+    Returns (base64_frames, saved_paths). If dest_dir is None, frames are extracted
+    in a temporary directory and then removed; saved_paths will be empty.
+    """
+    
+    if not dest_dir:
+        dest_dir = os.path.join(settings.DATA_DIR, settings.FRAMES_DIR)
+        ensure_dir(dest_dir)
+    if dest_dir:
+        pattern = os.path.join(dest_dir, "frame_%05d.jpg")
+        tmpdir = None
+    else:
+        tmpdir = tempfile.mkdtemp(prefix="frames_")
         pattern = os.path.join(tmpdir, "frame_%05d.jpg")
+    try:
         cmd = [
             "ffmpeg",
             "-y",
@@ -34,14 +54,25 @@ def _extract_frames(file_path: str, fps: int, max_frames: int) -> List[str]:
             pattern,
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        frame_files = sorted(glob.glob(os.path.join(tmpdir, "frame_*.jpg")))[:max_frames]
-        return [_encode_image(p) for p in frame_files]
+        search_dir = dest_dir or tmpdir or "."
+        all_frames = sorted(glob.glob(os.path.join(search_dir, "frame_*.jpg")))
+        frame_files = all_frames[:max_frames]
+        base64_frames = [_encode_image(p) for p in frame_files]
+        saved_paths = frame_files if dest_dir else []
+        # If we created extra frames beyond max_frames in a persistent dir, clean extras
+        if dest_dir and len(all_frames) > len(frame_files):
+            for extra in all_frames[len(frame_files):]:
+                try:
+                    os.remove(extra)
+                except Exception:
+                    pass
+        return base64_frames, saved_paths
     finally:
-        # temp frames dir will be cleaned by caller if needed; keep for safety on errors
-        try:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-        except Exception:
-            pass
+        if tmpdir:
+            try:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            except Exception:
+                pass
 
 
 _vision_client: OpenAI | None = None
@@ -64,12 +95,13 @@ def _get_vision_client() -> OpenAI:
     return _vision_client
 
 
-def detect_shots(file_path: str) -> Tuple[List[Shot], List[KeyObject]]:
+def detect_shots(file_path: str, video_id: str | None = None) -> Tuple[List[Shot], List[KeyObject]]:
     fps = getattr(settings, "VISION_FRAME_FPS", 1)
     max_frames = getattr(settings, "VISION_MAX_FRAMES", 75)
     model = getattr(settings, "OPENAI_VISION_MODEL", "gpt-4.1-mini")
 
-    base64_frames = _extract_frames(file_path, fps=fps, max_frames=max_frames)
+    dest_dir = get_frames_dir(video_id) if video_id else None
+    base64_frames, _saved_paths = _extract_frames(file_path, fps=fps, max_frames=max_frames, dest_dir=dest_dir)
 
     system_prompt = (
         "Analyze provided video frames. Return STRICT JSON with keys 'shots' and 'key_objects'. \n"
@@ -111,4 +143,5 @@ def detect_shots(file_path: str) -> Tuple[List[Shot], List[KeyObject]]:
     ]
     
     return shots, key_objects
+
 

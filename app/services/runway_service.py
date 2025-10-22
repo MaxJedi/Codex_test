@@ -51,4 +51,20 @@ class RunwayVideoService:
             mime_type=mime_type,
         )
 
+    def generate_image(
+        self,
+        prompt_text: str,
+        *,
+        model: str | None = None,
+        ratio: str = "1920:1080",
+        reference_images: list[dict[str, str]] | None = None,
+    ) -> RunwayTaskResult:
+        """Generate a still image from text (optionally with reference images)."""
+        return self._runway.text_to_image(
+            prompt_text=prompt_text,
+            model=model,
+            ratio=ratio,
+            reference_images=reference_images,
+        )
+
 
