@@ -5,13 +5,13 @@ services:
     init: true
     read_only: true
     restart: unless-stopped
+    network_mode: "host"
     # Открываем порт 9000 для доступа извне:
     ports:
       -  "9000:9000"
     environment:
         API_URL: "http://cobalt-api:9000"
-    networks:
-      - cobalt-network
+
     labels:
       - com.centurylinklabs.watchtower.scope=cobalt
     volumes:
@@ -25,14 +25,14 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-  # Пример: генератор visitor_data для YouTube (может не понадобиться)
-  yt-session-generator:
-    image: ghcr.io/imputnet/yt-session-generator:webserver
-    container_name: yt-session-generator
-    init: true
-    restart: unless-stopped
-    labels:
-      - com.centurylinklabs.watchtower.scope=cobalt
+  # # Пример: генератор visitor_data для YouTube (может не понадобиться)
+  # yt-session-generator:
+  #   image: ghcr.io/imputnet/yt-session-generator:webserver
+  #   container_name: yt-session-generator
+  #   init: true
+  #   restart: unless-stopped
+  #   labels:
+  #     - com.centurylinklabs.watchtower.scope=cobalt
 
 networks:
   cobalt-network:

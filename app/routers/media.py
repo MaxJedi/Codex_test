@@ -1,10 +1,13 @@
 from fastapi import APIRouter, HTTPException
-import json
 import os
 
 from app.schemas import AnalysisResult
-from app.services import transcribe, detect_shots, ensure_data_dir, save_json
+from app.services import transcribe, detect_shots, ensure_data_dir, save_json, concatenate_videos_in_dir
 from app.integrations import cobalt
+from app.integrations.yt_dlp import YtDlpDownloader
+from app.core.settings import settings
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -38,3 +41,41 @@ def analyze(payload: dict) -> AnalysisResult:
     })
     
     return AnalysisResult(transcript=transcript, shots=shots, key_objects=key_objects)
+
+
+@router.post("/download")
+def download(payload: dict) -> dict:
+    url = payload.get("url")
+    if not url:
+        raise HTTPException(400, "url required")
+    filename = payload.get("filename")
+    quality = payload.get("quality", "best[ext=mp4]/best")
+    dl = YtDlpDownloader(download_dir="data")
+    try:
+        res = dl.download(url, quality=quality, filename=filename)
+    except Exception as e:
+        raise HTTPException(500, f"Download failed: {e}")
+    return {"video_id": res.video_id, "title": res.title, "filepath": res.filepath}
+
+
+@router.post("/concatenate")
+def concatenate(payload: dict) -> dict:
+    input_dir = payload.get("input_dir")
+    video_id = payload.get("video_id")
+    pattern = payload.get("pattern") or "series_shot_*.mp4"
+    output_name = payload.get("output_name") or "merged.mp4"
+
+    if not input_dir and not video_id:
+        raise HTTPException(400, "input_dir or video_id required")
+
+    if not input_dir and video_id:
+        base_dir = settings.DATA_DIR
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        input_dir = os.path.join(app_dir, base_dir, settings.VIDEO_SHOTS_DIRNAME)
+    logger.info(f"Concatenating videos in directory: {input_dir}")
+    try:
+        output_path = concatenate_videos_in_dir(input_dir, pattern=pattern, output_name=output_name)
+    except Exception as e:
+        raise HTTPException(500, f"Concatenation failed: {e}")
+
+    return {"input_dir": input_dir, "output": output_path}

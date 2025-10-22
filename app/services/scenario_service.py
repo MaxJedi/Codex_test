@@ -1,9 +1,6 @@
 import json
-from re import S
 from typing import List
 from openai import OpenAI
-import httpx
-from pydantic import ValidationError
 from app.schemas import Transcript, Shot, Scenario, KeyObject
 from app.core.settings import settings
 import logging

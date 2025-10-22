@@ -12,12 +12,10 @@ __all__ = [
     "detect_shots",
     "make_ru_scenario",
     "plan_timeline",
-    "ensure_atusgit _dir",
+    "ensure_data_dir",
     "save_json",
     "read_json",
     "RunwayVideoService",
-    "compose_video_from_frames"
-    ,
+    "compose_video_from_frames",
     "concatenate_videos_in_dir"
-    
 ]

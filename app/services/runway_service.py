@@ -2,6 +2,10 @@ from typing import Optional
 
 from app.integrations.runway import RunwayIntegration, RunwayTaskResult
 
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 
 class RunwayVideoService:
     """Service layer for Runway text-to-video and image+text-to-video generation."""
@@ -42,6 +46,8 @@ class RunwayVideoService:
 
         image_path should point to a local image file. mime_type should match the image.
         """
+        
+        logger.info(f"Generating video from image and text: {image_path}, {prompt_text}, {model}, {ratio}, {duration}, {mime_type}")
         return self._runway.image_and_text_to_video(
             image_path=image_path,
             prompt_text=prompt_text,
@@ -57,14 +63,11 @@ class RunwayVideoService:
         *,
         model: str | None = None,
         ratio: str = "1920:1080",
-        reference_images: list[dict[str, str]] | None = None,
     ) -> RunwayTaskResult:
         """Generate a still image from text (optionally with reference images)."""
         return self._runway.text_to_image(
             prompt_text=prompt_text,
             model=model,
             ratio=ratio,
-            reference_images=reference_images,
         )
-
 

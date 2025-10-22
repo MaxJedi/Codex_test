@@ -10,6 +10,8 @@ from app.core.settings import settings
 from app.services.storage_service import ensure_dir
 from app.services.media_assembly_service import extract_last_frame
 from app.routers.media import analyze
+from app.schemas import Transcript, Shot, KeyObject
+from app.services.storage_service import read_json
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -41,14 +43,24 @@ def storyboard(payload: dict):
 @router.post("/video", response_model=GeneratedVideo)
 def generate_video(payload: dict) -> GeneratedVideo:
     scenario_data = payload.get("scenario")
+    prompt = payload.get("prompt")
     duration = int(payload.get("duration", 5))
     ratio = payload.get("ratio", "1280:720")
-    if not scenario_data:
-        raise HTTPException(400, "scenario required")
 
-    scn = Scenario.model_validate(scenario_data)
+    if not prompt and not scenario_data:
+        raise HTTPException(400, "prompt or scenario required")
+
+    if not prompt and scenario_data:
+        scn = Scenario.model_validate(scenario_data)
+        if getattr(scn, "scenes", None):
+            # Use first scene's visual description as a base prompt
+            prompt = scn.scenes[0].visual_description
+        else:
+            import json as _json
+            prompt = _json.dumps(scn.model_dump(), ensure_ascii=False)
+
     svc = RunwayVideoService()
-    result = svc.generate_from_text(scn, duration=duration, ratio=ratio)
+    result = svc.generate_from_text(prompt_text=prompt, duration=duration, ratio=ratio)
     return GeneratedVideo(task_id=result.task_id, status=result.status, url=result.output_url)
 
 
@@ -200,6 +212,7 @@ def generate_series(payload: dict) -> dict:
     model_t2i = payload.get("model_text_to_image")
     model_i2v = payload.get("model_image_to_video")
     scenario_path = payload.get("scenario_path")
+    resume = bool(payload.get("resume", False))
 
     # Resolve dirs
     if video_id:
@@ -246,42 +259,98 @@ def generate_series(payload: dict) -> dict:
     svc = RunwayVideoService()
     results = []
 
-    # 2) Generate first image
-    first_idx, first_scene = scene_items[0]
-    if isinstance(first_scene, str):
-        first_prompt = first_scene
-    elif isinstance(first_scene, dict):
-        first_prompt = str(first_scene.get("prompt") or first_scene.get("text") or first_scene.get("description") or first_scene)
-    else:
-        first_prompt = str(first_scene)
-    try:
-        img_task = svc.generate_image(first_prompt, model=model_t2i, ratio="1920:1080")
-        img_url = img_task.output_url
-    except Exception as e:
-        raise HTTPException(500, f"Image generation failed: {e}")
-    if not img_url:
-        raise HTTPException(500, "Image generation returned no URL")
+    # Determine resume start index based on existing shots
+    first_idx = scene_items[0][0]
+    existing_indices = set()
+    if resume and os.path.isdir(shots_dir):
+        for name in os.listdir(shots_dir):
+            m = _re.match(r"series_shot_(\d{5})\.mp4$", name)
+            if m:
+                try:
+                    existing_indices.add(int(m.group(1)))
+                except ValueError:
+                    pass
 
-    # Download first image
+    # Compute start_from as the next missing index after a continuous prefix
+    start_from = first_idx
+    if resume and existing_indices:
+        i = first_idx
+        while i in existing_indices:
+            i += 1
+        start_from = i
+
+    # Prepare first image (skip generating if resuming and it exists)
     first_image_path = os.path.join(images_dir, f"scene_{first_idx:05d}.jpg")
-    try:
-        with httpx.stream("GET", img_url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
-            resp.raise_for_status()
-            with open(first_image_path, "wb") as outf:
-                for chunk in resp.iter_bytes():
-                    outf.write(chunk)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to download generated image: {e}")
+    previous_image_path = None
+    need_generate_first_image = True
+    if resume and os.path.exists(first_image_path):
+        need_generate_first_image = False
+        previous_image_path = first_image_path
+
+    if need_generate_first_image:
+        # Generate first image from the first scene
+        first_scene = scene_items[0][1]
+        if isinstance(first_scene, str):
+            first_prompt = first_scene
+        elif isinstance(first_scene, dict):
+            first_prompt = str(first_scene.get("prompt") or first_scene.get("text") or first_scene.get("description") or first_scene)
+        else:
+            first_prompt = str(first_scene)
+        try:
+            img_task = svc.generate_image(first_prompt, model=model_t2i, ratio="1920:1080")
+            img_url = img_task.output_url
+        except Exception as e:
+            raise HTTPException(500, f"Image generation failed: {e}")
+        if not img_url:
+            raise HTTPException(500, "Image generation returned no URL")
+
+        try:
+            with httpx.stream("GET", img_url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                with open(first_image_path, "wb") as outf:
+                    for chunk in resp.iter_bytes():
+                        outf.write(chunk)
+        except Exception as e:
+            raise HTTPException(500, f"Failed to download generated image: {e}")
+        previous_image_path = first_image_path
+
+    # If resuming from a later index, set previous_image_path from last completed video frame
+    if start_from > first_idx:
+        prev_idx = start_from - 1
+        prev_last_frame = os.path.join(images_dir, f"scene_{prev_idx:05d}_last.jpg")
+        if not os.path.exists(prev_last_frame):
+            prev_video = os.path.join(shots_dir, f"series_shot_{prev_idx:05d}.mp4")
+            if not os.path.exists(prev_video):
+                raise HTTPException(400, f"Resume requested, but previous video not found: {prev_video}")
+            try:
+                extract_last_frame(prev_video, prev_last_frame)
+            except Exception as e:
+                raise HTTPException(500, f"Failed to extract last frame from previous video: {e}")
+        previous_image_path = prev_last_frame
 
     # 3..5) Chain videos
-    previous_image_path = first_image_path
     for idx, scene in scene_items:
+        if idx < start_from:
+            continue
         if isinstance(scene, str):
             prompt = scene
         elif isinstance(scene, dict):
             prompt = str(scene.get("prompt") or scene.get("text") or scene.get("description") or scene)
         else:
             prompt = str(scene)
+        video_path = os.path.join(shots_dir, f"series_shot_{idx:05d}.mp4")
+        if resume and os.path.exists(video_path):
+            # Skip regeneration, but ensure we have the last frame for chaining
+            next_image_path = os.path.join(images_dir, f"scene_{idx:05d}_last.jpg")
+            if not os.path.exists(next_image_path):
+                try:
+                    extract_last_frame(video_path, next_image_path)
+                except Exception as e:
+                    results.append({"scene": idx, "status": "frame_extract_error", "error": str(e)})
+                    break
+            previous_image_path = next_image_path
+            results.append({"scene": idx, "status": "skipped_existing", "path": video_path})
+            continue
         try:
             video_task = svc.generate_from_image_and_text(
                 image_path=previous_image_path,
@@ -300,7 +369,6 @@ def generate_series(payload: dict) -> dict:
             break
 
         # Save video
-        video_path = os.path.join(shots_dir, f"series_shot_{idx:05d}.mp4")
         try:
             with httpx.stream("GET", video_url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
                 resp.raise_for_status()
@@ -322,5 +390,52 @@ def generate_series(payload: dict) -> dict:
             results.append({"scene": idx, "status": "frame_extract_error", "error": str(e)})
             break
 
-    return {"video_id": video_id, "images_dir": images_dir, "shots_dir": shots_dir, "results": results}
+    return {"video_id": video_id, "images_dir": images_dir, "shots_dir": shots_dir, "resumed": resume, "start_from": start_from, "results": results}
 
+
+
+@router.post("/scenario_cached", response_model=Scenario)
+def scenario_cached(payload: dict):
+    """Generate scenario using existing cached analysis files in data/<video_id>.
+
+    Expects payload: {"video_id": str, "topic": str}
+    """
+    video_id = payload.get("video_id")
+    topic = payload.get("topic")
+    if not video_id or not topic:
+        raise HTTPException(400, "video_id and topic required")
+
+    base_dir = os.path.join("data", video_id)
+    transcript_path = os.path.join(base_dir, "transcript.json")
+    vision_path = os.path.join(base_dir, "vision.json")
+    if not os.path.exists(transcript_path):
+        raise HTTPException(404, f"transcript not found for {video_id}")
+    if not os.path.exists(vision_path):
+        raise HTTPException(404, f"vision not found for {video_id}")
+
+    t_raw = read_json(transcript_path)
+    v_raw = read_json(vision_path)
+
+    # Build models
+    segments = [
+        {"text": s.get("text", ""), "start": float(s.get("start", 0)), "end": float(s.get("end", 0))}
+        for s in t_raw.get("segments", t_raw if isinstance(t_raw, list) else [])
+    ]
+    transcript = Transcript.model_validate({"segments": segments})
+
+    shots = [
+        Shot(start_sec=float(s.get("start_sec", s.get("start", 0.0))), end_sec=float(s.get("end_sec", s.get("end", 0.0))))
+        for s in v_raw.get("shots", [])
+    ]
+    key_objects = [
+        KeyObject(
+            description=str(o.get("description", "")),
+            start_sec=float(o.get("start_sec", o.get("start", 0.0))),
+            end_sec=float(o.get("end_sec", o.get("end", 0.0))),
+            confidence=(float(o["confidence"]) if o.get("confidence") is not None else None),
+            categories=list(o.get("categories", []) or []),
+        )
+        for o in v_raw.get("key_objects", [])
+    ]
+
+    return make_ru_scenario(transcript, shots, topic, key_objects)

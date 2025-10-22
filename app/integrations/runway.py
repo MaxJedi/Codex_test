@@ -77,7 +77,6 @@ class RunwayIntegration:
         *,
         model: str | None = None,
         ratio: str = "1920:1080",
-        reference_images: list[dict[str, str]] | None = None,
     ) -> RunwayTaskResult:
         model = model or settings.__dict__.get("RUNWAY_MODEL_TEXT_TO_IMAGE", "gen4_image")
         if not isinstance(prompt_text, str):
@@ -92,7 +91,6 @@ class RunwayIntegration:
                     model=model,
                     ratio=ratio,
                     prompt_text=prompt_text,
-                    reference_images=reference_images or None,
                 ).wait_for_task_output()
             )
         except TaskFailedError as e:

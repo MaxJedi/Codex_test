@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from app.core.settings import settings
 import logging
+from app.integrations.yt_dlp import YtDlpDownloader
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,9 @@ def pull_transient(video_id: str, max_seconds: int = 90):
     Mirrors app.media_probe.pull_transient interface.
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
-    audio_path = video_path = None
-    audio_path, video_path = _download_with_cobalt(url)
+    yt_dlp = YtDlpDownloader()
+    download_result = yt_dlp.download(url)
+    video_path = download_result.filepath
 
 
     extracted_audio = os.path.join(_ensure_data_dir(), "audio.mp3")
