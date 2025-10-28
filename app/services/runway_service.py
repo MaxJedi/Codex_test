@@ -1,6 +1,7 @@
 from typing import Optional
 
 from app.integrations.runway import RunwayIntegration, RunwayTaskResult
+from app.core.settings import settings
 
 import logging
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ class RunwayVideoService:
         prompt_text: str,
         *,
         model: str | None = "veo3",
-        ratio: str = "1280:720",
+        ratio: str | None = None,
         duration: int = 8,
     ) -> RunwayTaskResult:
         """Generate a video from text prompt using Runway.
@@ -28,7 +29,7 @@ class RunwayVideoService:
         return self._runway.text_to_video(
             prompt_text=prompt_text,
             model=model,
-            ratio=ratio,
+            ratio=ratio or settings.VIDEO_DEFAULT_RATIO,
             duration=duration,
         )
 
@@ -38,7 +39,7 @@ class RunwayVideoService:
         prompt_text: str,
         *,
         model: str | None = None,
-        ratio: str = "1280:720",
+        ratio: str | None = None,
         duration: int = 5,
         mime_type: str = "image/png",
     ) -> RunwayTaskResult:
@@ -52,7 +53,7 @@ class RunwayVideoService:
             image_path=image_path,
             prompt_text=prompt_text,
             model=model,
-            ratio=ratio,
+            ratio=ratio or settings.VIDEO_DEFAULT_RATIO,
             duration=duration,
             mime_type=mime_type,
         )
@@ -62,12 +63,12 @@ class RunwayVideoService:
         prompt_text: str,
         *,
         model: str | None = None,
-        ratio: str = "1920:1080",
+        ratio: str | None = None,
     ) -> RunwayTaskResult:
         """Generate a still image from text (optionally with reference images)."""
         return self._runway.text_to_image(
             prompt_text=prompt_text,
             model=model,
-            ratio=ratio,
+            ratio=ratio or settings.VIDEO_DEFAULT_RATIO,
         )
 

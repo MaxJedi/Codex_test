@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     FRAMES_DIR: str = Field(default='frames', env='FRAMES_DIR')
     VIDEO_SHOTS_DIRNAME: str = Field(default='video_shots', env='VIDEO_SHOTS_DIRNAME')
     IMAGES_DIRNAME: str = Field(default='images', env='IMAGES_DIRNAME')
-
+    VIDEO_DEFAULT_RATIO: str = Field(default='1080:1920', env='VIDEO_DEFAULT_RATIO')
+    DEFAULT_SEARCH_VIDEOS_COUNT: int = Field(default=1, env='DEFAULT_SEARCH_VIDEOS_COUNT')
     class Config:
         env_file = '.env'
         extra = 'ignore'

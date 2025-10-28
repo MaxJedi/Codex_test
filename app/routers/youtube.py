@@ -31,4 +31,28 @@ def search(payload: dict):
     except Exception:
         raise HTTPException(400, "published_after must be RFC3339, e.g. 2025-09-01T00:00:00Z")
 
-    return search_trending(topic, n, region, published_after_norm, shorts)
+    return search_trending(topic=topic, n=n, region=region, published_after=published_after_norm, shorts=shorts)
+
+
+@router.post("/search_trending", response_model=List[Candidate])
+def search_trending_endpoint(payload: dict):
+    try:
+        topic = payload["topic"]
+        n = int(payload.get("n", 5))
+        region = payload.get("region", settings.REGION_CODE)
+        published_after = payload.get("published_after", settings.DEFAULT_PUBLISHED_AFTER)
+        shorts = bool(payload.get("shorts", True))
+    except KeyError as e:
+        raise HTTPException(400, f"Missing field {e}")
+
+    # Normalize RFC3339 timestamp to Z-suffix
+    try:
+        ts = published_after
+        if isinstance(ts, str) and ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        dt = datetime.fromisoformat(ts)
+        published_after_norm = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        raise HTTPException(400, "published_after must be RFC3339, e.g. 2025-09-01T00:00:00Z")
+
+    return search_trending(topic=topic, n=n, region=region, published_after=published_after_norm, shorts=shorts)

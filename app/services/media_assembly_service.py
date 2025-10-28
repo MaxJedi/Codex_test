@@ -1,7 +1,6 @@
 import os
 import glob
 import re
-import tempfile
 import subprocess
 
 from app.services.storage_service import ensure_data_dir, get_frames_dir
@@ -63,39 +62,28 @@ def concatenate_videos_in_dir(input_dir: str, *, pattern: str = "*.mp4", output_
 
     output_path = os.path.join(input_dir, output_name)
 
-    # Use concat demuxer with re-encode to ensure compatibility across inputs
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as list_file:
-        list_path = list_file.name
-        for p in files:
-            list_file.write(f"file '{p}'\n")
+    # Robust concat using filter_complex (re-encode), tolerates differing codecs/containers
+    cmd = ["ffmpeg", "-y"]
+    for p in files:
+        cmd += ["-i", p]
 
-    try:
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            list_path,
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            output_path,
-        ]
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    finally:
-        try:
-            os.remove(list_path)
-        except Exception:
-            pass
+    # Build concat filter mapping both video and audio streams
+    parts = []
+    for i in range(len(files)):
+        parts.append(f"[{i}:v:0][{i}:a:0]")
+    filter_complex = "".join(parts) + f"concat=n={len(files)}:v=1:a=1[outv][outa]"
+    cmd += [
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "[outa]",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        output_path,
+    ]
 
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return os.path.abspath(output_path)
 
 

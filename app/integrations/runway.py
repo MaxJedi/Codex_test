@@ -41,10 +41,11 @@ class RunwayIntegration:
         prompt_text: str,
         *,
         model: str | None = None,
-        ratio: str = "1280:720",
+        ratio: str = None,
         duration: int = 5,
     ) -> RunwayTaskResult:
         model = model or settings.__dict__.get("RUNWAY_MODEL_TEXT_TO_VIDEO", "gen4_turbo")
+        ratio = ratio or settings.VIDEO_DEFAULT_RATIO
         # Ensure prompt is a plain string (SDK requires string, not object)
         if not isinstance(prompt_text, str):
             try:
@@ -76,9 +77,10 @@ class RunwayIntegration:
         prompt_text: str,
         *,
         model: str | None = None,
-        ratio: str = "1920:1080",
+        ratio: str = None,
     ) -> RunwayTaskResult:
         model = model or settings.__dict__.get("RUNWAY_MODEL_TEXT_TO_IMAGE", "gen4_image")
+        ratio = ratio or settings.VIDEO_DEFAULT_RATIO
         if not isinstance(prompt_text, str):
             try:
                 import json as _json
@@ -109,11 +111,12 @@ class RunwayIntegration:
         prompt_text: str,
         *,
         model: str | None = None,
-        ratio: str = "1280:720",
+        ratio: str = None,
         duration: int = 5,
         mime_type: str = "image/png",
     ) -> RunwayTaskResult:
-        model = model or settings.__dict__.get("RUNWAY_MODEL_IMAGE_TO_VIDEO", "gen4_turbo")
+        model = model or settings.__dict__.get("RUNWAY_MODEL_IMAGE_TO_VIDEO", "veo3.1_fast")
+        ratio = ratio or settings.VIDEO_DEFAULT_RATIO
         # Ensure prompt is a plain string
         if not isinstance(prompt_text, str):
             try:

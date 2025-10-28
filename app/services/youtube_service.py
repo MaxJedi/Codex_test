@@ -96,13 +96,13 @@ def videos_list(**params) -> Dict[str, Any]:
     return _request("/videos", params)
 
 
-def search_trending(topic: str, n: int, region: str, published_after: str, shorts: bool = True) -> List[Candidate]:
+def search_trending(topic: str, n: int, region: str, shorts: bool = True, published_after: str | None = None) -> List[Candidate]:
     params = {
         "part": "snippet",
         "type": "video",
         "order": "viewCount",
         "q": topic,
-        "publishedAfter": published_after,
+        # "publishedAfter": published_after,
         "regionCode": region,
         "maxResults": min(max(n, 5), 50),
     }

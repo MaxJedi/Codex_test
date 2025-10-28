@@ -3,16 +3,24 @@ import os
 import json
 import re
 import httpx
+import shutil
 
 from app.schemas.content import Scenario, Storyboard, GeneratedVideo
 from app.services import make_ru_scenario, plan_timeline, RunwayVideoService
 from app.core.settings import settings
-from app.services.storage_service import ensure_dir
-from app.services.media_assembly_service import extract_last_frame
+from app.services.storage_service import ensure_dir, save_json
+from app.services.media_assembly_service import extract_last_frame, concatenate_videos_in_dir
 from app.routers.media import analyze
 from app.schemas import Transcript, Shot, KeyObject
 from app.services.storage_service import read_json
-
+from app.services.query_service import generate_search_query
+from app.services.youtube_service import search_trending
+from app.services.stt_service import transcribe
+from app.services.vision_service import detect_shots
+from app.integrations import cobalt
+import datetime
+import logging
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/content", tags=["content"])
 
 
@@ -45,7 +53,7 @@ def generate_video(payload: dict) -> GeneratedVideo:
     scenario_data = payload.get("scenario")
     prompt = payload.get("prompt")
     duration = int(payload.get("duration", 5))
-    ratio = payload.get("ratio", "1280:720")
+    ratio = payload.get("ratio") or settings.VIDEO_DEFAULT_RATIO
 
     if not prompt and not scenario_data:
         raise HTTPException(400, "prompt or scenario required")
@@ -76,7 +84,7 @@ def generate_full_video(payload: dict) -> dict:
     - model: optional Runway model override
     """
     video_id = payload.get("video_id")
-    ratio = payload.get("ratio", "1280:720")
+    ratio = payload.get("ratio") or settings.VIDEO_DEFAULT_RATIO
     duration = int(payload.get("duration", 6))
     model = payload.get("model")
 
@@ -264,12 +272,14 @@ def generate_series(payload: dict) -> dict:
     existing_indices = set()
     if resume and os.path.isdir(shots_dir):
         for name in os.listdir(shots_dir):
-            m = _re.match(r"series_shot_(\d{5})\.mp4$", name)
+            m = _re.match(r"series_shot_(\d+)\.mp4$", name)
+            if not m:
+                m = _re.match(r"shot_(\d+)\.mp4$", name)
             if m:
                 try:
                     existing_indices.add(int(m.group(1)))
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.error(f"Error parsing existing index: {e}")
 
     # Compute start_from as the next missing index after a continuous prefix
     start_from = first_idx
@@ -297,7 +307,7 @@ def generate_series(payload: dict) -> dict:
         else:
             first_prompt = str(first_scene)
         try:
-            img_task = svc.generate_image(first_prompt, model=model_t2i, ratio="1920:1080")
+            img_task = svc.generate_image(first_prompt, model=model_t2i, ratio=settings.VIDEO_DEFAULT_RATIO)
             img_url = img_task.output_url
         except Exception as e:
             raise HTTPException(500, f"Image generation failed: {e}")
@@ -390,7 +400,24 @@ def generate_series(payload: dict) -> dict:
             results.append({"scene": idx, "status": "frame_extract_error", "error": str(e)})
             break
 
-    return {"video_id": video_id, "images_dir": images_dir, "shots_dir": shots_dir, "resumed": resume, "start_from": start_from, "results": results}
+    # Concatenate all generated videos into a single file
+    full_video_dir = os.path.join(settings.DATA_DIR, f"video_{video_id}") if video_id else os.path.join(settings.DATA_DIR, "video")
+    ensure_dir(full_video_dir)
+    full_video_tmp = None
+    full_video_path = None
+    try:
+        full_video_tmp = concatenate_videos_in_dir(shots_dir, pattern="series_shot_*.mp4", output_name="full.mp4")
+        # Move to requested directory
+        full_video_path = os.path.join(full_video_dir, os.path.basename(full_video_tmp))
+        try:
+            os.replace(full_video_tmp, full_video_path)
+        except Exception:
+            shutil.copy2(full_video_tmp, full_video_path)
+    except Exception as e:
+        # Append concat error but still return partial results
+        results.append({"scene": None, "status": "concat_error", "error": str(e)})
+
+    return {"video_id": video_id, "images_dir": images_dir, "shots_dir": shots_dir, "full_video_dir": full_video_dir, "full_video_path": full_video_path, "resumed": resume, "start_from": start_from, "results": results}
 
 
 
@@ -439,3 +466,174 @@ def scenario_cached(payload: dict):
     ]
 
     return make_ru_scenario(transcript, shots, topic, key_objects)
+
+
+@router.post("/generate_from_prompt")
+def generate_from_prompt(payload: dict) -> dict:
+    """Full pipeline from user text to final video with resume support.
+
+    Request fields:
+    - text: user free-form request (required unless resuming)
+    - n: number of top search videos to analyze (default 3)
+    - folder or video_id: resume/use specific working folder under DATA_DIR (e.g., data_25_10_2025_13_45)
+    - resume: bool flag to resume from existing state (default False)
+    - region, published_after: optional YouTube search overrides (fallback to settings)
+
+    Creates DATA_DIR/<work_id>/ with subfolders:
+    frames, images, scenario, input_video, video_shots, result_video, transcript, vision
+    """
+    user_text = payload.get("text")
+    n = int(payload.get("n", settings.DEFAULT_SEARCH_VIDEOS_COUNT))
+    resume = bool(payload.get("resume", False))
+    work_id = payload.get("folder") or payload.get("video_id")
+    region = payload.get("region") or settings.REGION_CODE
+    published_after = payload.get("published_after") or settings.DEFAULT_PUBLISHED_AFTER
+
+    # Determine working directory
+    if not work_id:
+        ts = datetime.datetime.now().strftime("%d_%m_%Y_%H_%M")
+        work_id = f"data_{ts}"
+    base_dir = os.path.join(settings.DATA_DIR, work_id)
+
+    frames_dir = os.path.join(base_dir, "frames")
+    images_dir = os.path.join(base_dir, "images")
+    scenario_dir = os.path.join(base_dir, "scenario")
+    input_video_dir = os.path.join(base_dir, "input_video")
+    video_shots_dir = os.path.join(base_dir, "video_shots")
+    result_video_dir = os.path.join(base_dir, "result_video")
+    transcript_dir = os.path.join(base_dir, "transcript")
+    vision_dir = os.path.join(base_dir, "vision")
+
+    for d in [base_dir, frames_dir, images_dir, scenario_dir, input_video_dir, video_shots_dir, result_video_dir, transcript_dir, vision_dir]:
+        ensure_dir(d)
+
+    # 1) Build search query (unless resuming with existing state)
+    query = None
+    if resume:
+        # Try to reuse stored query
+        query_json = os.path.join(base_dir, "search_query.json")
+        if os.path.exists(query_json):
+            try:
+                qd = read_json(query_json)
+                query = qd.get("query")
+            except Exception as e:
+                logger.error(f"Error reading search query: {e}")
+                pass
+    if not query:
+        if not user_text:
+            raise HTTPException(400, "text required when not resuming")
+        query = generate_search_query(user_text)
+        save_json(os.path.join(base_dir, "search_query.json"), {"text": user_text, "query": query})
+
+    # 2) Search videos
+    candidates = search_trending(query, n=n, region=region, published_after=published_after, shorts=True)
+    save_json(os.path.join(base_dir, "candidates.json"), [c.model_dump(mode="json") for c in candidates])
+    video_ids = [c.video_id for c in candidates][:n]
+    if not video_ids:
+        return {
+            "work_id": work_id,
+            "base_dir": base_dir,
+            "query": query,
+            "message": "no candidates found for the query",
+            "series": None,
+        }
+
+    # 3) Analyze first N videos (transcript + vision)
+    for idx, vid in enumerate(video_ids, start=1):
+        vid_mp4 = os.path.join(input_video_dir, f"video_{idx:05d}.mp4")
+        aud_mp3 = os.path.join(input_video_dir, f"audio_{idx:05d}.mp3")
+        tr_out = os.path.join(transcript_dir, f"transcript_{idx:05d}.json")
+        vs_out = os.path.join(vision_dir, f"vision_{idx:05d}.json")
+
+        need_download = not os.path.exists(vid_mp4) or os.path.getsize(vid_mp4) < 1024
+        need_transcript = not os.path.exists(tr_out)
+        need_vision = not os.path.exists(vs_out)
+
+        if need_download or need_transcript or need_vision:
+            audio_path, video_path = cobalt.pull_transient(vid)
+            # Copy into workspace
+            try:
+                if need_download and video_path and os.path.exists(video_path):
+                    with open(video_path, "rb") as _src, open(vid_mp4, "wb") as _dst:
+                        _dst.write(_src.read())
+                if audio_path and os.path.exists(audio_path):
+                    with open(audio_path, "rb") as _src, open(aud_mp3, "wb") as _dst:
+                        _dst.write(_src.read())
+            except Exception as e:
+                logger.error(f"Error copying video or audio: {e}")
+                pass
+
+        if need_transcript and os.path.exists(aud_mp3):
+            tr = transcribe(aud_mp3)
+            save_json(tr_out, tr.model_dump())
+
+        if need_vision and os.path.exists(vid_mp4):
+            shots, key_objects = detect_shots(vid_mp4, work_id)
+            save_json(vs_out, {
+                "shots": [s.model_dump() for s in shots],
+                "key_objects": [ko.model_dump() for ko in key_objects],
+            })
+
+    # 4) Build aggregated data and generate scenario (if not exists)
+    scenario_path = os.path.join(scenario_dir, "scenario_data.json")
+    if not os.path.exists(scenario_path):
+        # Aggregate transcripts
+        segments: list[dict] = []
+        for p in sorted(os.listdir(transcript_dir)):
+            if p.endswith('.json'):
+                try:
+                    data = read_json(os.path.join(transcript_dir, p))
+                    for seg in data.get("segments", data if isinstance(data, list) else []):
+                        segments.append({
+                            "text": str(seg.get("text", "")),
+                            "start": float(seg.get("start", 0)),
+                            "end": float(seg.get("end", 0)),
+                        })
+                except Exception as e:
+                    logger.error(f"Error reading transcript: {e}")
+                    continue
+
+        # Aggregate vision
+        agg_shots: list[dict] = []
+        agg_objs: list[dict] = []
+        for p in sorted(os.listdir(vision_dir)):
+            if p.endswith('.json'):
+                try:
+                    v = read_json(os.path.join(vision_dir, p))
+                    for s in v.get("shots", []):
+                        agg_shots.append(s)
+                    for o in v.get("key_objects", []):
+                        agg_objs.append(o)
+                except Exception as e:
+                    logger.error(f"Error reading vision: {e}")
+                    continue
+
+        # Convert to models
+        transcript = Transcript.model_validate({"segments": segments})
+        shots = [Shot(start_sec=float(s.get("start_sec", s.get("start", 0.0))), end_sec=float(s.get("end_sec", s.get("end", 0.0)))) for s in agg_shots]
+        key_objects = [
+            KeyObject(
+                description=str(o.get("description", "")),
+                start_sec=float(o.get("start_sec", o.get("start", 0.0))),
+                end_sec=float(o.get("end_sec", o.get("end", 0.0))),
+                confidence=(float(o["confidence"]) if o.get("confidence") is not None else None),
+                categories=list(o.get("categories", []) or []),
+            ) for o in agg_objs
+        ]
+
+        scn = make_ru_scenario(transcript, shots, query, key_objects)
+        save_json(scenario_path, scn)
+
+    # 5) Generate series videos and concat (reusing existing endpoint logic with resume)
+    series_res = generate_series({
+        "video_id": work_id,
+        "scenario_path": scenario_path,
+        "resume": True,
+    })
+
+    return {
+        "work_id": work_id,
+        "base_dir": base_dir,
+        "query": query,
+        "series": series_res,
+    }
