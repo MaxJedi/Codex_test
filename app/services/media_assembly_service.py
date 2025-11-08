@@ -83,7 +83,27 @@ def concatenate_videos_in_dir(input_dir: str, *, pattern: str = "*.mp4", output_
         output_path,
     ]
 
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        # Fallback: concatenate video only (ignore audio stream mismatches or absence)
+        cmd_vo = ["ffmpeg", "-y"]
+        for p in files:
+            cmd_vo += ["-i", p]
+        parts_vo = []
+        for i in range(len(files)):
+            parts_vo.append(f"[{i}:v:0]")
+        filter_complex_vo = "".join(parts_vo) + f"concat=n={len(files)}:v=1:a=0[outv]"
+        cmd_vo += [
+            "-filter_complex", filter_complex_vo,
+            "-map", "[outv]",
+            "-an",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+        subprocess.run(cmd_vo, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return os.path.abspath(output_path)
 
 
