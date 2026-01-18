@@ -1,9 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 import os
 import json
 import re
 import httpx
 import shutil
+import tempfile
+from typing import List
+import subprocess
 
 from app.schemas.content import Scenario, Storyboard, GeneratedVideo
 from app.services import make_ru_scenario, plan_timeline, RunwayVideoService
@@ -11,17 +14,90 @@ from app.core.settings import settings
 from app.services.storage_service import ensure_dir, save_json
 from app.services.media_assembly_service import extract_last_frame, concatenate_videos_in_dir
 from app.routers.media import analyze
-from app.schemas import Transcript, Shot, KeyObject
+from app.schemas import Transcript, Shot, KeyObject, TextOverlayConfig
 from app.services.storage_service import read_json
 from app.services.query_service import generate_search_query
 from app.services.youtube_service import search_trending
 from app.services.stt_service import transcribe
 from app.services.vision_service import detect_shots
 from app.integrations import cobalt
+from app.services.text_overlay_service import TextOverlayService
 import datetime
 import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/content", tags=["content"])
+
+
+def _safe_realpath(path: str) -> str:
+    root = os.path.realpath(settings.FILE_BROWSER_ROOT)
+    real = os.path.realpath(path)
+    if not real.startswith(root.rstrip(os.sep) + os.sep) and real != root:
+        raise HTTPException(403, f"path is outside FILE_BROWSER_ROOT: {settings.FILE_BROWSER_ROOT}")
+    return real
+
+
+@router.get("/fs_ls")
+def fs_ls(path: str) -> dict:
+    """List directories and mp4 files for arbitrary filesystem browsing (restricted by FILE_BROWSER_ROOT)."""
+    real = _safe_realpath(path)
+    if not os.path.isdir(real):
+        raise HTTPException(404, f"Not a directory: {real}")
+    dirs: list[str] = []
+    mp4s: list[str] = []
+    for name in sorted(os.listdir(real)):
+        full = os.path.join(real, name)
+        if os.path.isdir(full):
+            dirs.append(name)
+        elif name.lower().endswith(".mp4"):
+            mp4s.append(name)
+    parent = os.path.dirname(real)
+    parent_allowed = None
+    try:
+        parent_allowed = _safe_realpath(parent)
+    except HTTPException:
+        parent_allowed = None
+    return {
+        "path": real,
+        "parent": parent_allowed,
+        "dirs": dirs,
+        "files": mp4s,
+    }
+
+
+@router.get("/video_info")
+def video_info(path: str) -> dict:
+    """Return basic video info (resolution, duration) using ffprobe. Path restricted by FILE_BROWSER_ROOT."""
+    real = _safe_realpath(path)
+    if not os.path.isfile(real):
+        raise HTTPException(404, f"Not a file: {real}")
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,avg_frame_rate",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "json",
+        real,
+    ]
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+        data = json.loads(out.decode("utf-8"))
+        stream = (data.get("streams") or [{}])[0]
+        fmt = data.get("format") or {}
+        return {
+            "path": real,
+            "width": stream.get("width"),
+            "height": stream.get("height"),
+            "duration_sec": float(fmt.get("duration")) if fmt.get("duration") else None,
+            "avg_frame_rate": stream.get("avg_frame_rate"),
+        }
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(500, f"ffprobe failed: {e.output.decode('utf-8', errors='ignore')[:500]}")
 
 
 @router.post("/scenario", response_model=Scenario)
@@ -70,6 +146,281 @@ def generate_video(payload: dict) -> GeneratedVideo:
     svc = RunwayVideoService()
     result = svc.generate_from_text(prompt_text=prompt, duration=duration, ratio=ratio)
     return GeneratedVideo(task_id=result.task_id, status=result.status, url=result.output_url)
+
+
+@router.post("/video_veo3_vertical", response_model=GeneratedVideo)
+def generate_video_veo3_vertical(payload: dict) -> GeneratedVideo:
+    """Generate video from prompt using veo3 model in vertical format (9:16).
+    
+    Expected payload:
+    - prompt: text prompt for video generation (required)
+    - duration: video duration in seconds (default: 5)
+    """
+    
+    prompt = """A real household kitten, not stylized, sitting on a slightly worn wooden table. Natural posture, subtle uneven fur, tiny random hairs sticking out, small shadow variations on the muzzle. The kitten quietly looks straight ahead at a person off-frame. Eyes reflect the room naturally, with imperfect reflections and tiny light falloff. Shot on Sony FX30, real optical behavior: mild chromatic aberration on high-contrast edges, gentle lens breathing, organic sensor noise in darker areas, soft daylight from a nearby window creating natural gradients on fur. Realistic color temperature, slightly imperfect white balance, micro-dust on the table surface, natural shadows falling in different directions. Camera is fixed, no artificial sharpness, no plastic skin, no symmetry polishing, no AI-cleanup. Depth of field behaves physically: background slightly blurred with real optical bokeh shape, not smoothened. No glossiness, no CGI feel, no smoothing, no HDR look. Only natural documentary realism."""
+    if not prompt:
+        raise HTTPException(400, "prompt required")
+    
+    duration = int(payload.get("duration", 5))
+    vertical_ratio = "1080:1920"  # 9:16 vertical format
+    
+    svc = RunwayVideoService()
+    result = svc.generate_from_text(
+        prompt_text=prompt,
+        model="veo3",
+        ratio=vertical_ratio,
+    )
+    return GeneratedVideo(task_id=result.task_id, status=result.status, url=result.output_url)
+
+
+@router.post("/video_image_prompt_vertical", response_model=GeneratedVideo)
+async def generate_video_image_prompt_vertical(
+    image: UploadFile = File(..., description="Image file to use for video generation"),
+    prompt: str = Form(..., description="Text prompt for video generation"),
+    duration: int = Form(default=5, description="Video duration in seconds"),
+) -> GeneratedVideo:
+    """Generate video from uploaded image and prompt using gen4_turbo model in vertical format (9:16).
+    
+    Accepts multipart/form-data with:
+    - image: image file (required)
+    - prompt: text prompt (required)
+    - duration: video duration in seconds (default: 5)
+    """
+    if not prompt:
+        raise HTTPException(400, "prompt required")
+    
+    # Determine MIME type from uploaded file
+    mime_type = image.content_type or "image/png"
+    if mime_type not in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+        mime_type = "image/png"  # fallback
+    
+    # Save uploaded file to temporary location
+    temp_dir = tempfile.mkdtemp()
+    temp_image_path = None
+    try:
+        # Determine file extension from content type
+        ext_map = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/webp": ".webp",
+        }
+        ext = ext_map.get(mime_type, ".png")
+        temp_image_path = os.path.join(temp_dir, f"uploaded_image{ext}")
+        
+        # Save uploaded file
+        with open(temp_image_path, "wb") as f:
+            content = await image.read()
+            f.write(content)
+        
+        vertical_ratio = "1080:1920"  # 9:16 vertical format
+        
+        svc = RunwayVideoService()
+        result = svc.generate_from_image_and_text(
+            image_path=temp_image_path,
+            prompt_text=prompt,
+            model="veo3.1",
+            ratio=vertical_ratio,
+            duration=duration,
+            mime_type=mime_type,
+        )
+        return GeneratedVideo(task_id=result.task_id, status=result.status, url=result.output_url)
+    finally:
+        # Clean up temporary file and directory
+        if temp_image_path and os.path.exists(temp_image_path):
+            try:
+                os.remove(temp_image_path)
+            except Exception:
+                pass
+        try:
+            os.rmdir(temp_dir)
+        except Exception:
+            pass
+
+
+@router.get("/video_folders", response_model=List[str])
+def list_video_folders() -> list[str]:
+    """List available folders under DATA_DIR that may contain videos."""
+    base = settings.DATA_DIR
+    if not os.path.isdir(base):
+        return []
+    folders: list[str] = []
+    for name in sorted(os.listdir(base)):
+        full = os.path.join(base, name)
+        if os.path.isdir(full):
+            folders.append(name)
+    return folders
+
+
+@router.get("/video_files", response_model=List[str])
+def list_video_files(folder: str) -> list[str]:
+    """List mp4 files inside a selected folder (recursively, relative paths)."""
+    base = os.path.join(settings.DATA_DIR, folder)
+    if not os.path.isdir(base):
+        raise HTTPException(404, f"Folder not found: {folder}")
+    result: list[str] = []
+    for root, _, files in os.walk(base):
+        for fn in files:
+            if fn.lower().endswith(".mp4"):
+                full = os.path.join(root, fn)
+                rel = os.path.relpath(full, base)
+                result.append(rel)
+    result.sort()
+    return result
+
+
+@router.post("/overlay_text")
+def overlay_text_on_video(payload: dict) -> dict:
+    """Apply text overlay on an existing video inside a chosen folder.
+
+    Expected JSON:
+    - folder: name of folder under DATA_DIR (required), e.g. work_id or video_id
+    - video_path: relative path inside folder to source video (optional).
+        If omitted, tries common defaults or first *.mp4 in folder.
+    - config: TextOverlayConfig-compatible object with text and styling.
+    """
+    folder = payload.get("folder")
+    video_path = payload.get("video_path")
+    input_path = payload.get("path")
+    cfg_data = payload.get("config") or {}
+    if not folder and not input_path:
+        raise HTTPException(400, "folder or path required")
+
+    if input_path:
+        source_full = _safe_realpath(input_path)
+        if not os.path.isfile(source_full):
+            raise HTTPException(404, f"Source video not found: {source_full}")
+        base = os.path.dirname(source_full)
+        folder = folder or os.path.basename(base)
+    else:
+        base = os.path.join(settings.DATA_DIR, folder)
+        if not os.path.isdir(base):
+            raise HTTPException(404, f"Folder not found: {folder}")
+
+    # Resolve source video path
+    source_full: str | None = None if not input_path else source_full
+    candidates: list[str] = []
+    if video_path:
+        candidates.append(os.path.join(base, video_path))
+    else:
+        # Try some common locations (result_video, video_shots, root)
+        defaults = [
+            os.path.join(base, "result_video", "full.mp4"),
+            os.path.join(base, "result_video", "result.mp4"),
+            os.path.join(base, "video_shots", "full.mp4"),
+        ]
+        candidates.extend(defaults)
+        # Fallback: first mp4 in folder
+        for root, _, files in os.walk(base):
+            for fn in files:
+                if fn.lower().endswith(".mp4"):
+                    candidates.append(os.path.join(root, fn))
+            if candidates:
+                break
+
+    for c in candidates:
+        if c and os.path.exists(c):
+            source_full = c
+            break
+
+    if not source_full:
+        raise HTTPException(404, "Source video not found; specify video_path or ensure mp4 exists in folder")
+
+    try:
+        cfg = TextOverlayConfig.model_validate(cfg_data)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid config: {e}")
+
+    # Output into subfolder 'overlay'
+    overlay_dir = os.path.join(base, "overlay")
+    ensure_dir(overlay_dir)
+    src_name = os.path.basename(source_full)
+    name, ext = os.path.splitext(src_name)
+    output_path = os.path.join(overlay_dir, f"{name}_text{ext or '.mp4'}")
+
+    svc = TextOverlayService()
+    final_path = svc.apply_text_on_video(source_full, cfg, output_path=output_path)
+
+    rel_output = os.path.relpath(final_path, base)
+    return {
+        "folder": folder,
+        "source": os.path.relpath(source_full, base),
+        "output": rel_output,
+        "download_url": f"/content/overlay_download?folder={folder}&file={rel_output}",
+    }
+
+
+@router.post("/overlay_text_upload")
+async def overlay_text_upload(
+    video: UploadFile = File(..., description="Source video file (mp4)"),
+    text: str = Form(...),
+    font_size: int = Form(48),
+    max_words_per_line: int = Form(7),
+    align: str = Form("center"),
+    center_x: float = Form(0.5),
+    center_y: float = Form(0.8),
+    font_color: str = Form("#ffffff"),
+    outline_color: str = Form("#000000"),
+    outline_width: int = Form(2),
+    line_spacing: int = Form(4),
+    font_path: str = Form(""),
+) -> dict:
+    """Upload a video (browser file picker) and apply text overlay; returns download URL."""
+    import uuid
+
+    if not text.strip():
+        raise HTTPException(400, "text required")
+
+    overlay_id = f"overlay_{uuid.uuid4().hex[:12]}"
+    out_dir = os.path.join(settings.DATA_DIR, "overlays", overlay_id)
+    ensure_dir(out_dir)
+
+    input_path = os.path.join(out_dir, "input.mp4")
+    output_path = os.path.join(out_dir, "output.mp4")
+
+    # Save uploaded video
+    with open(input_path, "wb") as f:
+        f.write(await video.read())
+
+    cfg = TextOverlayConfig(
+        text=text,
+        font_path=(font_path or None),
+        font_size=font_size,
+        max_words_per_line=max_words_per_line,
+        align=align if align in ("left", "center", "right") else "center",
+        center_x=center_x,
+        center_y=center_y,
+        font_color=font_color,
+        outline_color=outline_color,
+        outline_width=outline_width,
+        line_spacing=line_spacing,
+    )
+
+    svc = TextOverlayService()
+    svc.apply_text_on_video(input_path, cfg, output_path=output_path)
+
+    # Reuse existing download endpoint by folder+file convention:
+    folder = os.path.join("overlays", overlay_id)
+    rel_file = "output.mp4"
+    return {
+        "folder": folder,
+        "output": rel_file,
+        "download_url": f"/content/overlay_download?folder={folder}&file={rel_file}",
+    }
+
+
+@router.get("/overlay_download")
+def overlay_download(folder: str, file: str):
+    """Download resulting overlaid video from selected folder."""
+    from fastapi.responses import FileResponse
+
+    base = os.path.join(settings.DATA_DIR, folder)
+    full = os.path.join(base, file)
+    if not os.path.isfile(full):
+        raise HTTPException(404, "File not found")
+
+    filename = os.path.basename(full)
+    return FileResponse(full, media_type="video/mp4", filename=filename)
 
 
 @router.post("/generate_full_video")
