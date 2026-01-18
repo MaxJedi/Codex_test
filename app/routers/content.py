@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 import os
 import json
 import re
@@ -9,17 +9,19 @@ from app.schemas.content import Scenario, Storyboard, GeneratedVideo
 from app.services import make_ru_scenario, plan_timeline, RunwayVideoService
 from app.core.settings import settings
 from app.services.storage_service import ensure_dir, save_json
-from app.services.media_assembly_service import extract_last_frame, concatenate_videos_in_dir
+from app.services.media_assembly_service import extract_last_frame, concatenate_videos_in_dir, overlay_title_text
 from app.routers.media import analyze
 from app.schemas import Transcript, Shot, KeyObject
 from app.services.storage_service import read_json
 from app.services.query_service import generate_search_query
+from app.services.query_service import generate_reels_ideas, generate_reel_visual_prompt
 from app.services.youtube_service import search_trending
 from app.services.stt_service import transcribe
 from app.services.vision_service import detect_shots
 from app.integrations import cobalt
 import datetime
 import logging
+import tempfile
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -637,3 +639,264 @@ def generate_from_prompt(payload: dict) -> dict:
         "query": query,
         "series": series_res,
     }
+
+
+@router.post("/reels")
+def generate_reels(payload: dict) -> dict:
+    """Generate Instagram reels set from ideas or by prompting GPT for ideas.
+
+    Input (optional):
+    - ideas: list of strings (titles) or dict {title: description}
+    - n: number of ideas if ideas not provided (default from settings)
+    - topic: optional hint for GPT for idea generation
+    - duration: seconds per reel (default 8)
+    - ratio: aspect ratio (default settings.VIDEO_DEFAULT_RATIO)
+    - overlay_title: whether to burn title at top (default True)
+    Generation steps per idea:
+    1) Generate a still image (first frame concept) from the scenario prompt and save to images/
+    2) Generate the final video from that image + the same prompt (gen4_turbo)
+    """
+    duration = int(payload.get("duration", 8))
+    ratio = payload.get("ratio") or settings.VIDEO_DEFAULT_RATIO
+    overlay_title = bool(payload.get("overlay_title", True))
+    n = int(payload.get("n", settings.REELS_DEFAULT_COUNT))
+    topic = payload.get("topic")
+    ideas = payload.get("ideas")
+
+    ts = datetime.datetime.now().strftime("%d_%m_%y_%H_%M_%S")
+    work_id = f"reels_{ts}"
+    base_dir = os.path.join(settings.DATA_DIR, work_id)
+    videos_dir = os.path.join(base_dir, "videos")
+    scenarios_dir = os.path.join(base_dir, "scenarios")
+    images_dir = os.path.join(base_dir, "images")
+    ensure_dir(base_dir)
+    ensure_dir(videos_dir)
+    ensure_dir(scenarios_dir)
+    ensure_dir(images_dir)
+
+    # Prepare titles -> descriptions
+    titles_map: dict[str, str] = {}
+    if isinstance(ideas, dict):
+        titles_map = {str(k): str(v) for k, v in ideas.items()}
+    elif isinstance(ideas, list):
+        for t in ideas[:n]:
+            titles_map[str(t)] = ""
+    else:
+        titles_map = generate_reels_ideas(n, topic_hint=topic) or {}
+        if not titles_map:
+            raise HTTPException(500, "Failed to generate reels ideas")
+
+    save_json(os.path.join(base_dir, "ideas.json"), titles_map)
+
+    svc = RunwayVideoService()
+    results = []
+    for idx, (title, desc) in enumerate(list(titles_map.items()), start=1):
+        # Ask GPT to generate the concise visual prompt (scene/atmosphere)
+        scenario_text = generate_reel_visual_prompt(title, desc)
+        print(f"Scenario text: {scenario_text}")
+        save_json(os.path.join(scenarios_dir, f"scenario_{idx:05d}.json"), {"title": title, "description": desc, "scenario": scenario_text})
+
+        # 1) Generate still image (first frame concept)
+        image_url = None
+        image_path = os.path.join(images_dir, f"image_{idx:05d}.jpg")
+        try:
+            img_task = svc.generate_image(scenario_text, ratio=ratio)
+            image_url = img_task.output_url
+        except Exception as e:
+            results.append({"index": idx, "title": title, "status": "image_error", "error": str(e)})
+            continue
+        if not image_url:
+            results.append({"index": idx, "title": title, "status": "no_image_output"})
+            continue
+        try:
+            with httpx.stream("GET", image_url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                with open(image_path, "wb") as outf:
+                    for chunk in resp.iter_bytes():
+                        outf.write(chunk)
+        except Exception as e:
+            results.append({"index": idx, "title": title, "status": "image_download_error", "error": str(e), "url": image_url})
+            continue
+
+        # 2) Generate video from the image + scenario
+        try:
+            print(f"Generating video from scenario text: {scenario_text}")
+            task = svc.generate_from_image_and_text(
+                image_path=image_path,
+                prompt_text=scenario_text,
+                model="gen4_turbo",
+                ratio=ratio,
+                duration=duration,
+                mime_type="image/jpeg",
+            )
+            url = task.output_url
+        except Exception as e:
+            results.append({"index": idx, "title": title, "status": "error", "error": str(e)})
+            continue
+        if not url:
+            results.append({"index": idx, "title": title, "status": "no_output"})
+            continue
+
+        raw_path = os.path.join(videos_dir, f"reel_{idx:05d}.mp4")
+        try:
+            with httpx.stream("GET", url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                with open(raw_path, "wb") as outf:
+                    for chunk in resp.iter_bytes():
+                        outf.write(chunk)
+        except Exception as e:
+            results.append({"index": idx, "title": title, "status": "download_error", "error": str(e), "url": url})
+            continue
+
+        final_path = raw_path
+        if overlay_title:
+            out_path = os.path.join(videos_dir, f"reel_{idx:05d}_title.mp4")
+            try:
+                overlay_title_text(raw_path, title, out_path, font_path=settings.DRAW_TEXT_FONT_PATH)
+                final_path = out_path
+            except Exception as e:
+                # If overlay fails, keep raw video
+                results.append({"index": idx, "title": title, "status": "overlay_error", "error": str(e), "path": raw_path})
+                final_path = raw_path
+
+        results.append({"index": idx, "title": title, "description": desc, "status": "ok", "url": url, "path": final_path})
+
+    return {
+        "work_id": work_id,
+        "base_dir": base_dir,
+        "videos_dir": videos_dir,
+        "scenarios_dir": scenarios_dir,
+        "images_dir": images_dir,
+        "count": len(results),
+        "results": results,
+    }
+
+
+@router.post("/image_to_video")
+def image_to_video(
+    image: UploadFile = File(...),
+    prompt: str | None = Form(default=None),
+    ratio: str | None = Form(default="2160:3840"),  # vertical 4K
+    duration: int = Form(default=8),
+    model: str | None = Form(default="veo3"),
+) -> dict:
+    """Generate a vertical 4K video from an uploaded image and optional prompt (default model: veo3)."""
+    # Persist upload to temp file
+    suffix = os.path.splitext(image.filename or "")[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp_path = tmp.name
+        tmp.write(image.file.read())
+    mime = image.content_type or "image/jpeg"
+
+    svc = RunwayVideoService()
+    try:
+        task = svc.generate_from_image_and_text(
+            image_path=tmp_path,
+            prompt_text=prompt or "",
+            model=model or "veo3",
+            ratio=ratio or "2160:3840",
+            duration=duration,
+            mime_type=mime,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+    url = task.output_url
+    saved_path = None
+    if url:
+        out_dir = os.path.join(settings.DATA_DIR, "result_video")
+        ensure_dir(out_dir)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved_path = os.path.join(out_dir, f"image_to_video_{ts}.mp4")
+        try:
+            with httpx.stream("GET", url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                with open(saved_path, "wb") as outf:
+                    for chunk in resp.iter_bytes():
+                        outf.write(chunk)
+        except Exception as e:
+            saved_path = None
+            return {"status": task.status, "url": url, "error": str(e)}
+
+    return {"status": task.status, "url": url, "path": saved_path}
+
+@router.post("/image_to_image")
+def image_to_image(
+    image: UploadFile = File(...),
+    prompt: str | None = Form(default=None),
+    ratio: str | None = Form(default="1080:1920"),
+    model: str | None = Form(default=None),  # default integration: gen4_image
+) -> dict:
+    """Generate a vertical image from an uploaded image plus prompt (image-to-image)."""
+    suffix = os.path.splitext(image.filename or "")[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp_path = tmp.name
+        tmp.write(image.file.read())
+    mime = image.content_type or "image/jpeg"
+
+    svc = RunwayVideoService()
+    try:
+        task = svc.generate_image_from_image_and_text(
+            image_path=tmp_path,
+            prompt_text=prompt or "",
+            model=model,
+            ratio=ratio or "1248x832",
+            mime_type=mime,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+    url = task.output_url
+    saved_path = None
+    if url:
+        out_dir = os.path.join(settings.DATA_DIR, settings.IMAGES_DIRNAME)
+        ensure_dir(out_dir)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved_path = os.path.join(out_dir, f"image_to_image_{ts}.jpg")
+        try:
+            with httpx.stream("GET", url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                with open(saved_path, "wb") as outf:
+                    for chunk in resp.iter_bytes():
+                        outf.write(chunk)
+        except Exception as e:
+            return {"status": task.status, "url": url, "error": str(e)}
+
+    return {"status": task.status, "url": url, "path": saved_path}
+
+@router.post("/text_to_image")
+def text_to_image(payload: dict) -> dict:
+    """Generate a vertical 4K image from text prompt (default model: gen4_image)."""
+    prompt = payload.get("prompt")
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+    ratio = payload.get("ratio") or "1080:1920"
+    model = payload.get("model") or None  # use integration default (gen4_image)
+
+    svc = RunwayVideoService()
+    task = svc.generate_image(prompt_text=prompt, ratio=ratio, model=model)
+    url = task.output_url
+
+    saved_path = None
+    if url:
+        out_dir = os.path.join(settings.DATA_DIR, settings.IMAGES_DIRNAME)
+        ensure_dir(out_dir)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved_path = os.path.join(out_dir, f"text_to_image_{ts}.jpg")
+        try:
+            with httpx.stream("GET", url, timeout=settings.OPENAI_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                with open(saved_path, "wb") as outf:
+                    for chunk in resp.iter_bytes():
+                        outf.write(chunk)
+        except Exception as e:
+            saved_path = None
+            return {"status": task.status, "url": url, "error": str(e)}
+
+    return {"status": task.status, "url": url, "path": saved_path}

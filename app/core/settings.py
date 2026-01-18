@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     VIDEO_SHOTS_DIRNAME: str = Field(default='video_shots', env='VIDEO_SHOTS_DIRNAME')
     IMAGES_DIRNAME: str = Field(default='images', env='IMAGES_DIRNAME')
     VIDEO_DEFAULT_RATIO: str = Field(default='1080:1920', env='VIDEO_DEFAULT_RATIO')
+    REELS_DEFAULT_COUNT: int = Field(default=1, env='REELS_DEFAULT_COUNT')
+    DRAW_TEXT_FONT_PATH: str = Field(default='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', env='DRAW_TEXT_FONT_PATH')
     DEFAULT_SEARCH_VIDEOS_COUNT: int = Field(default=1, env='DEFAULT_SEARCH_VIDEOS_COUNT')
     class Config:
         env_file = '.env'

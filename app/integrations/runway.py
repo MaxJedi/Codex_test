@@ -1,5 +1,6 @@
 import base64
 from typing import Any
+import re
 
 from pydantic import BaseModel
 from runwayml import RunwayML, TaskFailedError
@@ -15,6 +16,17 @@ class RunwayTaskResult(BaseModel):
 
 
 class RunwayIntegration:
+    def _prepare_prompt(self, prompt_text: Any, *, max_len: int = 950) -> str:
+        if not isinstance(prompt_text, str):
+            try:
+                import json as _json
+                prompt_text = _json.dumps(prompt_text, ensure_ascii=False)
+            except Exception:
+                prompt_text = str(prompt_text)
+        prompt_text = re.sub(r"\s+", " ", prompt_text).strip()
+        if len(prompt_text) > max_len:
+            prompt_text = prompt_text[: max_len - 1] + "…"
+        return prompt_text
     def __init__(self, api_key: str | None = None) -> None:
         api_key = api_key or settings.__dict__.get("RUNWAY_API_KEY")
         if not api_key:
@@ -46,13 +58,7 @@ class RunwayIntegration:
     ) -> RunwayTaskResult:
         model = model or settings.__dict__.get("RUNWAY_MODEL_TEXT_TO_VIDEO", "gen4_turbo")
         ratio = ratio or settings.VIDEO_DEFAULT_RATIO
-        # Ensure prompt is a plain string (SDK requires string, not object)
-        if not isinstance(prompt_text, str):
-            try:
-                import json as _json
-                prompt_text = _json.dumps(prompt_text, ensure_ascii=False)
-            except Exception:
-                prompt_text = str(prompt_text)
+        prompt_text = self._prepare_prompt(prompt_text)
         try:
             task = (
                 self._client.text_to_video.create(
@@ -60,6 +66,42 @@ class RunwayIntegration:
                     prompt_text=prompt_text,
                     ratio=ratio,
                     duration=duration,
+                ).wait_for_task_output()
+            )
+        except TaskFailedError as e:
+            raise RuntimeError(f"Runway task failed: {e}")
+
+        return RunwayTaskResult(
+            task_id=str(getattr(task, "id", "")),
+            status=str(getattr(task, "status", "unknown")),
+            output_url=self._extract_output_url(task),
+            raw=getattr(task, "__dict__", {}) or {}
+        )
+
+    def image_and_text_to_image(
+        self,
+        image_path: str,
+        prompt_text: str,
+        *,
+        model: str | None = None,
+        ratio: str = None,
+        mime_type: str = "image/png",
+    ) -> RunwayTaskResult:
+        """Generate an image using an input image plus a text prompt (image-to-image)."""
+        model =  "gen4_image"#model or  settings.__dict__.get("RUNWAY_MODEL_IMAGE_TO_IMAGE", "gen4_image")
+        ratio = ratio or settings.VIDEO_DEFAULT_RATIO
+        prompt_text = self._prepare_prompt(prompt_text)
+        with open(image_path, "rb") as f:
+            base64_image = base64.b64encode(f.read()).decode("utf-8")
+            data_uri = f"data:{mime_type};base64,{base64_image}"
+
+        try:
+            task = (
+                self._client.text_to_image.create(
+                    model=model,
+                    ratio=ratio,
+                    prompt_text=prompt_text,
+                    reference_images=[{"uri": data_uri, "tag": "ref1"}],
                 ).wait_for_task_output()
             )
         except TaskFailedError as e:
@@ -81,12 +123,7 @@ class RunwayIntegration:
     ) -> RunwayTaskResult:
         model = model or settings.__dict__.get("RUNWAY_MODEL_TEXT_TO_IMAGE", "gen4_image")
         ratio = ratio or settings.VIDEO_DEFAULT_RATIO
-        if not isinstance(prompt_text, str):
-            try:
-                import json as _json
-                prompt_text = _json.dumps(prompt_text, ensure_ascii=False)
-            except Exception:
-                prompt_text = str(prompt_text)
+        prompt_text = self._prepare_prompt(prompt_text)
         try:
             task = (
                 self._client.text_to_image.create(
@@ -117,13 +154,7 @@ class RunwayIntegration:
     ) -> RunwayTaskResult:
         model = model or settings.__dict__.get("RUNWAY_MODEL_IMAGE_TO_VIDEO", "veo3.1_fast")
         ratio = ratio or settings.VIDEO_DEFAULT_RATIO
-        # Ensure prompt is a plain string
-        if not isinstance(prompt_text, str):
-            try:
-                import json as _json
-                prompt_text = _json.dumps(prompt_text, ensure_ascii=False)
-            except Exception:
-                prompt_text = str(prompt_text)
+        prompt_text = self._prepare_prompt(prompt_text)
         with open(image_path, "rb") as f:
             base64_image = base64.b64encode(f.read()).decode("utf-8")
             data_uri = f"data:{mime_type};base64,{base64_image}"

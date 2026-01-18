@@ -128,3 +128,69 @@ def extract_last_frame(video_path: str, output_image_path: str) -> str:
     return output_image_path
 
 
+def overlay_title_text(input_video: str, title_text: str, output_video: str, *, font_path: str) -> str:
+    """Burn a title text at the top of a vertical video using ffmpeg drawtext.
+
+    Layout rules:
+    - Vertical orientation assumed (9:16). Positions are expressed proportionally.
+    - Left/right margins: 10% each (target line width <= 80% of frame width).
+    - Top margin: 15% of frame height.
+    - Word-wrapping is approximated in Python by splitting into lines up to a max char count.
+    """
+    # Simple word wrap targeting ~80% width on 9:16; adjust if needed
+    def _wrap_words(text: str, max_chars: int = 28) -> str:
+        words = text.strip().split()
+        lines: list[str] = []
+        current: list[str] = []
+        length = 0
+        for w in words:
+            add_len = len(w) + (1 if current else 0)
+            if length + add_len > max_chars:
+                if current:
+                    lines.append(" ".join(current))
+                current = [w]
+                length = len(w)
+            else:
+                current.append(w)
+                length += add_len
+        if current:
+            lines.append(" ".join(current))
+        return "\n".join(lines)
+
+    wrapped = _wrap_words(title_text, max_chars=28)
+    # Escape for drawtext
+    safe_text = (
+        wrapped.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace(":", "\\:")
+        .replace("\n", r"\n")
+    )
+    # fontsize relative to height; box to improve readability; fix_bounds prevents clipping
+    drawtext = (
+        f"drawtext=fontfile='{font_path}':"
+        f"text='{safe_text}':"
+        "fontcolor=white:fontsize=h*0.04:line_spacing=8:"
+        "box=1:boxcolor=black@0.45:boxborderw=12:fix_bounds=1:"
+        "x=(w-text_w)/2:y=h*0.15"
+    )
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_video,
+        "-vf",
+        drawtext,
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        output_video,
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return output_video
+
+

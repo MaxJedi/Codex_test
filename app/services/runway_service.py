@@ -18,7 +18,7 @@ class RunwayVideoService:
         self,
         prompt_text: str,
         *,
-        model: str | None = "veo3",
+        model: str | None = None,
         ratio: str | None = None,
         duration: int = 8,
     ) -> RunwayTaskResult:
@@ -70,5 +70,23 @@ class RunwayVideoService:
             prompt_text=prompt_text,
             model=model,
             ratio=ratio or settings.VIDEO_DEFAULT_RATIO,
+        )
+
+    def generate_image_from_image_and_text(
+        self,
+        image_path: str,
+        prompt_text: str,
+        *,
+        model: str | None = None,
+        ratio: str | None = None,
+        mime_type: str = "image/jpeg",
+    ) -> RunwayTaskResult:
+        """Generate an image using an input image plus a text prompt."""
+        return self._runway.image_and_text_to_image(
+            image_path=image_path,
+            prompt_text=prompt_text,
+            model=model,
+            ratio=ratio or settings.VIDEO_DEFAULT_RATIO,
+            mime_type=mime_type,
         )
 
