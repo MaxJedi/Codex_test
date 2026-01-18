@@ -1,0 +1,658 @@
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
+
+
+router = APIRouter(prefix="/ui", tags=["ui"])
+
+
+@router.get("/overlay", response_class=HTMLResponse)
+def overlay_page() -> str:
+    """Simple web UI for selecting a folder/video and applying text overlay."""
+    return """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>FABRIC — Текст на видео</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050816;
+      --card-bg: #0f172a;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.15);
+      --border: #1e293b;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --danger: #f97373;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: radial-gradient(circle at top, #1e293b 0, var(--bg) 40%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+    .page {
+      max-width: 1200px;
+      padding: 24px 16px 40px;
+      margin: 0 auto;
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 24px;
+    }
+    @media (max-width: 900px) {
+      .page {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .card {
+      background: linear-gradient(135deg, rgba(15,23,42,0.98), rgba(15,23,42,0.96));
+      border-radius: 18px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85);
+      padding: 20px 20px 22px;
+      backdrop-filter: blur(24px);
+    }
+    .header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 650;
+      letter-spacing: 0.03em;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .title span.badge {
+      font-size: 11px;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, rgba(56,189,248,0.15), rgba(59,130,246,0.1));
+      border: 1px solid rgba(56,189,248,0.4);
+      color: var(--accent);
+      letter-spacing: 0.12em;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 4px;
+    }
+    select, input[type="text"], input[type="number"], textarea, input[type="color"] {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(15,23,42,0.9);
+      color: var(--text);
+      font-size: 13px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    select:focus, input:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+      background: rgba(15,23,42,0.98);
+    }
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .row > div {
+      flex: 1;
+      min-width: 0;
+    }
+    .section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin: 10px 0 6px;
+    }
+    .pill-group {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 2px;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid var(--border);
+    }
+    .pill-btn {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 5px 12px;
+      font-size: 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .pill-btn.active {
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+      color: white;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    input[type="range"] {
+      flex: 1;
+    }
+    .btn {
+      border-radius: 999px;
+      border: none;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 550;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+      color: white;
+      box-shadow: 0 10px 25px rgba(56,189,248,0.35);
+      margin-top: 4px;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+      box-shadow: none;
+    }
+    .btn-secondary {
+      background: rgba(15,23,42,0.9);
+      color: var(--muted);
+      box-shadow: none;
+      border: 1px solid var(--border);
+    }
+    .status {
+      font-size: 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      min-height: 18px;
+    }
+    .status--error {
+      color: var(--danger);
+    }
+    .badge-small {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    video {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid rgba(148,163,184,0.3);
+      background: black;
+    }
+    .output-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    a.download-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    a.download-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div>
+        <div class="title">
+          FABRIC Overlay
+          <span class="badge">text on video</span>
+        </div>
+        <div class="subtitle">Выбери папку и ролик, настрой текст и получи готовое видео с титрами.</div>
+      </div>
+      <div class="subtitle" id="apiBaseInfo"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Исходное видео</div>
+      <div class="row">
+        <div>
+          <label>Источник</label>
+          <div class="pill-group" id="sourceGroup">
+            <button type="button" class="pill-btn active" data-value="upload">Загрузить (file picker)</button>
+            <button type="button" class="pill-btn" data-value="server">Серверная папка</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="uploadBlock">
+        <div class="row">
+          <div style="flex:2;">
+            <label for="videoUpload">Видео файл (mp4)</label>
+            <input id="videoUpload" type="file" accept="video/mp4,video/*" />
+          </div>
+          <div style="flex:1;display:flex;align-items:flex-end;gap:8px;">
+            <span class="badge-small" id="uploadBadge" style="display:none;">готово</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="serverBlock" style="display:none;">
+      <div class="row">
+        <div style="flex:2;">
+          <label for="pathInput">Папка в файловой системе</label>
+          <input id="pathInput" type="text" placeholder="/app/data или /home/..." />
+        </div>
+        <div style="flex:1;display:flex;align-items:flex-end;gap:8px;">
+          <button type="button" class="btn btn-secondary" id="loadBtn" style="margin-top:0;">Загрузить</button>
+          <button type="button" class="btn btn-secondary" id="upBtn" style="margin-top:0;">⬆︎</button>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="fileSelect">Видео / папки</label>
+          <select id="fileSelect"></select>
+        </div>
+      </div>
+      <div class="output-meta" id="videoInfo" style="margin-top:-2px;"></div>
+      </div>
+
+      <div class="section-title">Текст</div>
+      <div>
+        <label for="textInput">Текст для наложения</label>
+        <textarea id="textInput" placeholder="Напишите текст, который будет поверх видео..."></textarea>
+      </div>
+
+      <div class="section-title">Оформление</div>
+      <div class="row">
+        <div>
+          <label for="fontSize">Размер шрифта</label>
+          <input id="fontSize" type="number" min="8" max="200" value="48" />
+        </div>
+        <div>
+          <label for="maxWords">Слов в строке</label>
+          <input id="maxWords" type="number" min="1" max="50" value="7" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Выравнивание</label>
+          <div class="pill-group" id="alignGroup">
+            <button type="button" class="pill-btn" data-value="left">Слева</button>
+            <button type="button" class="pill-btn active" data-value="center">По центру</button>
+            <button type="button" class="pill-btn" data-value="right">Справа</button>
+          </div>
+        </div>
+        <div>
+          <label for="outlineWidth">Обводка</label>
+          <input id="outlineWidth" type="number" min="0" max="20" value="2" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="fontColor">Цвет текста</label>
+          <input id="fontColor" type="color" value="#ffffff" />
+        </div>
+        <div>
+          <label for="outlineColor">Цвет обводки</label>
+          <input id="outlineColor" type="color" value="#000000" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Позиция по X / Y</label>
+          <div class="slider-row">
+            X&nbsp;<input id="centerX" type="range" min="0" max="100" value="50" /><span id="centerXVal">50%</span>
+          </div>
+          <div class="slider-row" style="margin-top:4px;">
+            Y&nbsp;<input id="centerY" type="range" min="0" max="100" value="80" /><span id="centerYVal">80%</span>
+          </div>
+        </div>
+        <div>
+          <label for="lineSpacing">Межстрочный интервал</label>
+          <input id="lineSpacing" type="number" min="0" max="100" value="4" />
+        </div>
+      </div>
+
+      <button class="btn" id="applyBtn">
+        <span>Наложить текст</span>
+      </button>
+      <div class="status" id="statusText"></div>
+      <div class="row" style="margin-top:12px;">
+        <label class="section-title" style="margin-bottom:6px;">Функции</label>
+        <div style="flex:1;">
+          <input type="checkbox" id="autoFitToggle" />
+          <label for="autoFitToggle" style="display:inline-block;margin-left:6px;font-size:12px;">Авто-подбор текста</label>
+        </div>
+      </div>
+      <div id="autoFitBlock" style="display:none;">
+        <div class="row">
+          <div>
+            <label for="paddingPct">Паддинг (%)</label>
+            <input id="paddingPct" type="number" min="0" max="30" value="5" />
+          </div>
+          <div>
+            <label for="baseFontSize">Базовый размер</label>
+            <input id="baseFontSize" type="number" min="20" max="400" value="120" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Результат</div>
+      <div id="resultBadge" class="badge-small" style="display:none;margin-bottom:8px;"></div>
+      <video id="previewVideo" controls style="display:none;" playsinline></video>
+      <div class="output-meta" id="outputMeta"></div>
+      <div style="margin-top:10px;">
+        <a id="downloadLink" class="download-link" href="#" style="display:none;" download>Скачать видео</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fileSelect = document.getElementById('fileSelect');
+    const sourceGroup = document.getElementById('sourceGroup');
+    const uploadBlock = document.getElementById('uploadBlock');
+    const serverBlock = document.getElementById('serverBlock');
+    const videoUpload = document.getElementById('videoUpload');
+    const uploadBadge = document.getElementById('uploadBadge');
+    const pathInput = document.getElementById('pathInput');
+    const loadBtn = document.getElementById('loadBtn');
+    const upBtn = document.getElementById('upBtn');
+    const videoInfo = document.getElementById('videoInfo');
+    const textInput = document.getElementById('textInput');
+    const fontSizeInput = document.getElementById('fontSize');
+    const maxWordsInput = document.getElementById('maxWords');
+    const outlineWidthInput = document.getElementById('outlineWidth');
+    const fontColorInput = document.getElementById('fontColor');
+    const outlineColorInput = document.getElementById('outlineColor');
+    const centerXInput = document.getElementById('centerX');
+    const centerYInput = document.getElementById('centerY');
+    const centerXVal = document.getElementById('centerXVal');
+    const centerYVal = document.getElementById('centerYVal');
+    const lineSpacingInput = document.getElementById('lineSpacing');
+    const alignGroup = document.getElementById('alignGroup');
+    const autoFitToggle = document.getElementById('autoFitToggle');
+    const autoFitBlock = document.getElementById('autoFitBlock');
+    const paddingPctInput = document.getElementById('paddingPct');
+    const baseFontSizeInput = document.getElementById('baseFontSize');
+    const applyBtn = document.getElementById('applyBtn');
+    const statusText = document.getElementById('statusText');
+    const previewVideo = document.getElementById('previewVideo');
+    const downloadLink = document.getElementById('downloadLink');
+    const outputMeta = document.getElementById('outputMeta');
+    const resultBadge = document.getElementById('resultBadge');
+    const apiBaseInfo = document.getElementById('apiBaseInfo');
+
+    function setStatus(text, isError = false) {
+      statusText.textContent = text || '';
+      statusText.classList.toggle('status--error', !!isError);
+    }
+
+    function getAlignValue() {
+      const active = alignGroup.querySelector('.pill-btn.active');
+      return active ? active.dataset.value : 'center';
+    }
+
+    function getSourceMode() {
+      const active = sourceGroup.querySelector('.pill-btn.active');
+      return active ? active.dataset.value : 'upload';
+    }
+
+    alignGroup.addEventListener('click', (e) => {
+      const btn = e.target.closest('.pill-btn');
+      if (!btn) return;
+      alignGroup.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+
+    sourceGroup.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.pill-btn');
+      if (!btn) return;
+      sourceGroup.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const mode = getSourceMode();
+      uploadBlock.style.display = (mode === 'upload') ? 'block' : 'none';
+      serverBlock.style.display = (mode === 'server') ? 'block' : 'none';
+      if (mode === 'server') {
+        await loadFs(pathInput.value);
+      }
+      setStatus('');
+    });
+
+    videoUpload.addEventListener('change', async () => {
+      uploadBadge.style.display = 'none';
+      const file = videoUpload.files && videoUpload.files[0];
+      if (!file) return;
+      uploadBadge.style.display = 'inline-block';
+      uploadBadge.textContent = file.name;
+    });
+
+    autoFitToggle.addEventListener('change', () => {
+      autoFitBlock.style.display = autoFitToggle.checked ? 'block' : 'none';
+    });
+
+    centerXInput.addEventListener('input', () => {
+      centerXVal.textContent = centerXInput.value + '%';
+    });
+    centerYInput.addEventListener('input', () => {
+      centerYVal.textContent = centerYInput.value + '%';
+    });
+
+    async function loadFs(path) {
+      fileSelect.innerHTML = '';
+      videoInfo.textContent = '';
+      if (!path) return;
+      try {
+        const res = await fetch('/content/fs_ls?path=' + encodeURIComponent(path));
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        pathInput.value = data.path;
+
+        const entries = [];
+        if (data.dirs) {
+          for (const d of data.dirs) entries.push({ kind: 'dir', name: d });
+        }
+        if (data.files) {
+          for (const f of data.files) entries.push({ kind: 'file', name: f });
+        }
+        if (!entries.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'Папка пустая';
+          fileSelect.appendChild(opt);
+          return;
+        }
+        for (const e of entries) {
+          const opt = document.createElement('option');
+          opt.value = e.name;
+          opt.textContent = (e.kind === 'dir' ? '📁 ' : '🎬 ') + e.name;
+          opt.dataset.kind = e.kind;
+          fileSelect.appendChild(opt);
+        }
+      } catch (e) {
+        setStatus('Ошибка чтения папки: ' + e, true);
+      }
+    }
+
+    async function loadVideoInfo(absPath) {
+      videoInfo.textContent = '';
+      try {
+        const res = await fetch('/content/video_info?path=' + encodeURIComponent(absPath));
+        if (!res.ok) throw new Error(await res.text());
+        const info = await res.json();
+        const wh = (info.width && info.height) ? (info.width + '×' + info.height) : '—';
+        const dur = (info.duration_sec != null) ? (info.duration_sec.toFixed(1) + 's') : '—';
+        videoInfo.textContent = 'Разрешение: ' + wh + ' · Длительность: ' + dur;
+      } catch (e) {
+        videoInfo.textContent = 'Не удалось получить информацию о видео';
+      }
+    }
+
+    loadBtn.addEventListener('click', () => {
+      loadFs(pathInput.value.trim());
+    });
+    upBtn.addEventListener('click', async () => {
+      const p = pathInput.value.trim();
+      if (!p) return;
+      // rely on server to tell parent; simplest: strip last segment client-side
+      const idx = p.replace(/\/+$/, '').lastIndexOf('/');
+      if (idx <= 0) return;
+      const parent = p.slice(0, idx) || '/';
+      await loadFs(parent);
+    });
+
+    fileSelect.addEventListener('change', async () => {
+      const opt = fileSelect.selectedOptions[0];
+      if (!opt) return;
+      const kind = opt.dataset.kind;
+      const name = opt.value;
+      if (!kind || !name) return;
+      const base = pathInput.value.trim().replace(/\/+$/, '');
+      const abs = base + '/' + name;
+      if (kind === 'dir') {
+        await loadFs(abs);
+      } else {
+        await loadVideoInfo(abs);
+      }
+    });
+
+    applyBtn.addEventListener('click', async () => {
+      const mode = getSourceMode();
+      const text = textInput.value.trim();
+      if (!text) {
+        setStatus('Введите текст для наложения', true);
+        return;
+      }
+
+      const autoFitEnabled = autoFitToggle.checked;
+      const cfg = {
+        text: text,
+        font_size: parseInt(fontSizeInput.value || '48', 10),
+        max_words_per_line: parseInt(maxWordsInput.value || '7', 10),
+        align: getAlignValue(),
+        center_x: parseFloat(centerXInput.value) / 100.0,
+        center_y: parseFloat(centerYInput.value) / 100.0,
+        font_color: fontColorInput.value,
+        outline_color: outlineColorInput.value,
+        outline_width: parseInt(outlineWidthInput.value || '2', 10),
+        line_spacing: parseInt(lineSpacingInput.value || '4', 10)
+      };
+      if (autoFitEnabled) {
+        cfg.auto_fit = true;
+        cfg.padding_pct = parseFloat(paddingPctInput.value || '5');
+        cfg.auto_fit_base_font_size = parseInt(baseFontSizeInput.value || '120', 10);
+      }
+
+      setStatus('Обработка видео… Это может занять время.');
+      applyBtn.disabled = true;
+      resultBadge.style.display = 'none';
+      previewVideo.style.display = 'none';
+      downloadLink.style.display = 'none';
+      outputMeta.textContent = '';
+
+      try {
+        let res;
+        if (mode === 'upload') {
+          const file = videoUpload.files && videoUpload.files[0];
+          if (!file) {
+            throw new Error('Выберите видеофайл для загрузки');
+          }
+          const form = new FormData();
+          form.append('video', file);
+          form.append('text', cfg.text);
+          form.append('font_size', String(cfg.font_size));
+          form.append('max_words_per_line', String(cfg.max_words_per_line));
+          form.append('align', cfg.align);
+          form.append('center_x', String(cfg.center_x));
+          form.append('center_y', String(cfg.center_y));
+          form.append('font_color', cfg.font_color);
+          form.append('outline_color', cfg.outline_color);
+          form.append('outline_width', String(cfg.outline_width));
+          form.append('line_spacing', String(cfg.line_spacing));
+          res = await fetch('/content/overlay_text_upload', { method: 'POST', body: form });
+        } else {
+          const opt = fileSelect.selectedOptions[0];
+          const base = pathInput.value.trim().replace(/\/+$/, '');
+          const selected = (opt && opt.dataset.kind === 'file') ? opt.value : null;
+          const absPath = selected ? (base + '/' + selected) : null;
+          if (!absPath) throw new Error('Выберите видеофайл (mp4)');
+          const payload = { path: absPath, config: cfg };
+          res = await fetch('/content/overlay_text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || ('HTTP ' + res.status));
+        }
+        const data = await res.json();
+        setStatus('Готово');
+        resultBadge.style.display = 'inline-block';
+        resultBadge.textContent = 'Видео с текстом сгенерировано';
+
+        if (data.download_url) {
+          const url = data.download_url;
+          downloadLink.href = url;
+          downloadLink.style.display = 'inline-block';
+          downloadLink.textContent = 'Скачать ' + (data.output || 'видео');
+
+          previewVideo.src = url;
+          previewVideo.style.display = 'block';
+        }
+        outputMeta.textContent = (data.source ? ('Источник: ' + data.source + ' · ') : '') +
+          (data.output ? ('Результат: ' + data.output) : '');
+      } catch (e) {
+        setStatus('Ошибка: ' + e, true);
+      } finally {
+        applyBtn.disabled = false;
+      }
+    });
+
+    // Init
+    apiBaseInfo.textContent = window.location.origin;
+    // default path: /app/data (docker) or ./data (local)
+    pathInput.value = '/app/data';
+    loadFs(pathInput.value);
+  </script>
+</body>
+</html>
+    """
+
+
+
+

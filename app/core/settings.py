@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     RUNWAY_API_KEY: str
     
     DATA_DIR: str = Field(default='data', env='DATA_DIR')
+    FILE_BROWSER_ROOT: str = Field(default='/', env='FILE_BROWSER_ROOT')
     FRAMES_DIR: str = Field(default='frames', env='FRAMES_DIR')
     VIDEO_SHOTS_DIRNAME: str = Field(default='video_shots', env='VIDEO_SHOTS_DIRNAME')
     IMAGES_DIRNAME: str = Field(default='images', env='IMAGES_DIRNAME')
