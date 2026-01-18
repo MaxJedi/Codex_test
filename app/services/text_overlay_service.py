@@ -1,7 +1,6 @@
 import os
 import subprocess
 import json
-from typing import Tuple
 
 from app.core.settings import settings
 from app.schemas import TextOverlayConfig
@@ -56,21 +55,56 @@ def _probe_video_size(path: str) -> tuple[int, int]:
     return w, h
 
 
-def _compute_auto_layout(config: TextOverlayConfig, video_width: int) -> tuple[int, int]:
+def _count_non_whitespace_chars(text: str) -> int:
+    return sum(1 for ch in text if not ch.isspace())
+
+
+def _estimate_text_box_pixels(
+    wrapped_text: str,
+    *,
+    font_size: int,
+    line_spacing: int,
+) -> tuple[float, float]:
+    # Rough model (works well enough for auto-fit heuristics):
+    # - avg glyph width  ~= 0.55 * font_size
+    # - avg glyph height ~= 1.15 * font_size
+    lines = wrapped_text.splitlines() or [wrapped_text]
+    max_line_len = max((len(line) for line in lines), default=0)
+    w = max_line_len * (font_size * 0.55)
+    h = (len(lines) * (font_size * 1.15)) + (max(0, len(lines) - 1) * line_spacing)
+    return w, h
+
+
+def _estimate_text_coverage_pct(
+    *,
+    video_width: int,
+    video_height: int,
+    text: str,
+    font_size: int,
+) -> float:
+    # "Coverage" = total area of letters vs full video area (approx).
+    # Area(1 char) ~= (0.55 * fs) * (1.15 * fs)
+    letters = _count_non_whitespace_chars(text)
+    if letters <= 0:
+        return 0.0
+    video_area = max(1, video_width * video_height)
+    char_area = (0.55 * float(font_size)) * (1.15 * float(font_size))
+    return (letters * char_area) / float(video_area) * 100.0
+
+
+def _compute_auto_words_per_line(config: TextOverlayConfig, *, video_width: int, font_size: int) -> int:
     padding_pixels = int(video_width * float(config.padding_pct or 0.0) / 100.0)
     usable_width = max(1, video_width - 2 * padding_pixels)
-    base_font = config.auto_fit_base_font_size or config.font_size
-    avg_char_width = max(1, base_font * 0.45)
+    avg_char_width = max(1.0, float(font_size) * 0.45)
     max_chars = max(1, int(usable_width / avg_char_width))
     words = config.text.split()
     avg_word_len = sum(len(w) for w in words) / len(words) if words else 5.0
     avg_word_len = max(1.0, avg_word_len)
-    approximate_words = max(1, int(max_chars / (avg_word_len + 1)))
-    return base_font, approximate_words
+    return max(1, int(max_chars / (avg_word_len + 1)))
 
 
-def _compute_position(cfg: TextOverlayConfig) -> Tuple[str, str]:
-    # center_x, center_y in [0,1]
+def _compute_position(cfg: TextOverlayConfig) -> tuple[str, str]:
+    # center_x is horizontal anchor (left/center/right), center_y now refers to the top edge of the text block.
     cx = cfg.center_x
     cy = cfg.center_y
     if cfg.align == "center":
@@ -79,12 +113,74 @@ def _compute_position(cfg: TextOverlayConfig) -> Tuple[str, str]:
         x_expr = f"w*{cx}"
     else:  # right
         x_expr = f"w*{cx}-text_w"
-    y_expr = f"h*{cy}-text_h/2"
+    y_expr = f"h*{cy}"
     return x_expr, y_expr
 
 
 class TextOverlayService:
     """Service to apply text overlay on existing videos using ffmpeg drawtext."""
+
+    def _auto_fit_by_coverage(self, input_video: str, config: TextOverlayConfig) -> TextOverlayConfig:
+        vw, vh = _probe_video_size(input_video)
+        padding_x = int(vw * float(config.padding_pct or 0.0) / 100.0)
+        padding_y = int(vh * float(config.padding_pct or 0.0) / 100.0)
+        usable_w = max(1, vw - 2 * padding_x)
+        usable_h = max(1, vh - 2 * padding_y)
+
+        start_fs = int(config.auto_fit_base_font_size or config.font_size)
+        min_fs = int(config.auto_fit_min_font_size)
+        min_fs = max(1, min(min_fs, start_fs))
+
+        min_pct = float(config.min_text_coverage_pct or 0.0)
+        max_pct = float(config.max_text_coverage_pct or 0.0)
+        min_pct = max(0.0, min(min_pct, max_pct))
+
+        min_words = max(1, int(config.auto_fit_min_words_per_line))
+        max_words = max(min_words, int(config.auto_fit_max_words_per_line))
+        reached_max_words = False
+        current_words = min_words
+
+        candidates: list[tuple[int, int, float]] = []
+
+        for fs in range(start_fs, min_fs - 1, -1):
+            computed_words = _compute_auto_words_per_line(config, video_width=vw, font_size=fs)
+            allowed_words = max(min_words, min(max_words, computed_words))
+            if not reached_max_words:
+                current_words = max(current_words, allowed_words)
+                if current_words >= max_words:
+                    current_words = max_words
+                    reached_max_words = True
+            else:
+                current_words = max_words
+
+            wrapped = _wrap_text(config.text, current_words)
+            coverage = _estimate_text_coverage_pct(
+                video_width=vw,
+                video_height=vh,
+                text=wrapped,
+                font_size=fs,
+            )
+            box_w, box_h = _estimate_text_box_pixels(wrapped, font_size=fs, line_spacing=int(config.line_spacing))
+
+            if box_w > usable_w or box_h > usable_h:
+                continue
+
+            candidates.append((fs, current_words, coverage))
+
+            if min_pct <= coverage <= max_pct:
+                return config.model_copy(update={"font_size": fs, "max_words_per_line": current_words})
+
+        if not candidates:
+            return config
+
+        under_max = next((c for c in candidates if c[2] <= max_pct), None)
+        if under_max:
+            chosen_fs, chosen_words, _ = under_max
+            return config.model_copy(update={"font_size": chosen_fs, "max_words_per_line": chosen_words})
+
+        chosen_fs, chosen_words, _ = candidates[-1]
+        return config.model_copy(update={"font_size": chosen_fs, "max_words_per_line": chosen_words})
+
 
     def apply_text_on_video(
         self,
@@ -108,12 +204,8 @@ class TextOverlayService:
 
         render_config = config
         if config.auto_fit:
-            vw, _ = _probe_video_size(input_video)
-            layout_font_size, layout_words = _compute_auto_layout(config, vw)
-            render_config = config.model_copy(update={
-                "font_size": layout_font_size,
-                "max_words_per_line": layout_words,
-            })
+            render_config = self._auto_fit_by_coverage(input_video, config)
+
         wrapped = _wrap_text(render_config.text, render_config.max_words_per_line)
         text_escaped = wrapped
         x_expr, y_expr = _compute_position(render_config)
@@ -122,91 +214,48 @@ class TextOverlayService:
             "center": "C+M",
             "right": "R+M",
         }
-        text_align = align_map.get(config.align, "C+M")
+        text_align = align_map.get(render_config.align, "C+M")
 
         # Common drawtext options
         text_for_filter = text_escaped
-        font_color = _normalize_ffmpeg_color(config.font_color)
-        outline_color = _normalize_ffmpeg_color(config.outline_color)
-        print(f"text_for_filter: {text_for_filter}")
+        font_color = _normalize_ffmpeg_color(render_config.font_color)
+        outline_color = _normalize_ffmpeg_color(render_config.outline_color)
         draw_opts = [
+            "fontfile=/home/alleftinna/python/FABRIC/data/fonts/Lorenzo Sans Bold.ttf",
             f"text='{text_for_filter}'",
             "box=1",
             "boxcolor=0x000000@0.0",
             "boxborderw=0",
             f"text_align={text_align}",
-            f"fontsize={config.font_size}",
+            f"fontsize={render_config.font_size}",
             f"fontcolor={font_color}",
-            f"line_spacing={config.line_spacing}",
+            f"line_spacing={render_config.line_spacing}",
             f"bordercolor={outline_color}",
-            f"borderw={config.outline_width}",
+            f"borderw={render_config.outline_width}",
             f"x={x_expr}",
             f"y={y_expr}",
         ]
-        if config.font_path:
-            draw_opts.insert(0, f"fontfile={_escape_drawtext(config.font_path)}")
+        # if render_config.font_path:
+        #     # NOTE: ffmpeg drawtext expects fontfile path; keep as-is (no custom escaping helper here).
+        #     draw_opts.insert(0, f"fontfile='{render_config.font_path}'")
 
         drawtext = "drawtext=" + ":".join(draw_opts)
-
-        if not config.auto_fit:
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                input_video,
-                "-vf",
-                drawtext,
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "copy",
-                output_path,
-            ]
-        else:
-            # Auto-fit: render text with big fontsize on transparent layer and scale to max width.
-            vw, vh = _probe_video_size(input_video)
-            max_width = int(vw * (100.0 - 2.0 * float(config.padding_pct)) / 100.0)
-            max_width = max(1, min(max_width, vw))
-            base_fs = int(config.auto_fit_base_font_size)
-
-            draw_opts_af = list(draw_opts)
-            # Replace fontsize with base_fs for rendering before scaling
-            draw_opts_af = [o if not o.startswith("fontsize=") else f"fontsize={base_fs}" for o in draw_opts_af]
-            drawtext_af = "drawtext=" + ":".join(draw_opts_af)
-
-            # Build filter_complex
-            # 1) transparent layer (same aspect as video)
-            # 2) drawtext on it
-            # 3) scale layer to desired width (scale2ref)
-            # 4) overlay on original video
-            filter_complex = (
-                f"color=c=black@0.0:s={vw}x{vh}[bg];"
-                f"[bg]{drawtext_af}[txt];"
-                f"[txt][0:v]scale2ref=w={max_width}:h=ow*ih/iw[scaled][vref];"
-                f"[vref][scaled]overlay=x=W*{config.center_x}-w/2:y=H*{config.center_y}-h/2:format=auto[outv]"
-            )
-
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                input_video,
-                "-filter_complex",
-                filter_complex,
-                "-map",
-                "[outv]",
-                "-map",
-                "0:a?",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "copy",
-                output_path,
-            ]
+        print(drawtext)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_video,
+            "-vf",
+            drawtext,
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            output_path,
+        ]
 
         # Use subprocess with minimal shell involvement
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

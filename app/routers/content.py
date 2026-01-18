@@ -5,7 +5,6 @@ import re
 import httpx
 import shutil
 import tempfile
-from typing import List
 import subprocess
 
 from app.schemas.content import Scenario, Storyboard, GeneratedVideo
@@ -25,7 +24,6 @@ from app.integrations import cobalt
 from app.services.text_overlay_service import TextOverlayService
 import datetime
 import logging
-import tempfile
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -69,6 +67,27 @@ def fs_ls(path: str) -> dict:
 @router.get("/video_info")
 def video_info(path: str) -> dict:
     """Return basic video info (resolution, duration) using ffprobe. Path restricted by FILE_BROWSER_ROOT."""
+    def _parse_rate(rate: str | None) -> float | None:
+        if not rate:
+            return None
+        s = str(rate).strip()
+        if not s or s == "0/0":
+            return None
+        if "/" in s:
+            num_s, den_s = s.split("/", 1)
+            try:
+                num = float(num_s)
+                den = float(den_s)
+            except ValueError:
+                return None
+            if den == 0:
+                return None
+            return num / den
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
     real = _safe_realpath(path)
     if not os.path.isfile(real):
         raise HTTPException(404, f"Not a file: {real}")
@@ -79,9 +98,7 @@ def video_info(path: str) -> dict:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height,avg_frame_rate",
-        "-show_entries",
-        "format=duration",
+        "stream=width,height,avg_frame_rate,r_frame_rate,codec_name,pix_fmt:format=duration,size,bit_rate,format_name",
         "-of",
         "json",
         real,
@@ -91,12 +108,22 @@ def video_info(path: str) -> dict:
         data = json.loads(out.decode("utf-8"))
         stream = (data.get("streams") or [{}])[0]
         fmt = data.get("format") or {}
+        avg_frame_rate = stream.get("avg_frame_rate")
+        r_frame_rate = stream.get("r_frame_rate")
+        fps = _parse_rate(avg_frame_rate) or _parse_rate(r_frame_rate)
         return {
             "path": real,
             "width": stream.get("width"),
             "height": stream.get("height"),
             "duration_sec": float(fmt.get("duration")) if fmt.get("duration") else None,
-            "avg_frame_rate": stream.get("avg_frame_rate"),
+            "avg_frame_rate": avg_frame_rate,
+            "r_frame_rate": r_frame_rate,
+            "fps": fps,
+            "codec": stream.get("codec_name"),
+            "pix_fmt": stream.get("pix_fmt"),
+            "format_name": fmt.get("format_name"),
+            "size_bytes": int(fmt.get("size")) if fmt.get("size") else None,
+            "bit_rate": int(fmt.get("bit_rate")) if fmt.get("bit_rate") else None,
         }
     except subprocess.CalledProcessError as e:
         raise HTTPException(500, f"ffprobe failed: {e.output.decode('utf-8', errors='ignore')[:500]}")
@@ -171,6 +198,7 @@ def generate_video_veo3_vertical(payload: dict) -> GeneratedVideo:
         prompt_text=prompt,
         model="veo3",
         ratio=vertical_ratio,
+        duration=duration,
     )
     return GeneratedVideo(task_id=result.task_id, status=result.status, url=result.output_url)
 
@@ -240,7 +268,7 @@ async def generate_video_image_prompt_vertical(
             pass
 
 
-@router.get("/video_folders", response_model=List[str])
+@router.get("/video_folders", response_model=list[str])
 def list_video_folders() -> list[str]:
     """List available folders under DATA_DIR that may contain videos."""
     base = settings.DATA_DIR
@@ -254,7 +282,7 @@ def list_video_folders() -> list[str]:
     return folders
 
 
-@router.get("/video_files", response_model=List[str])
+@router.get("/video_files", response_model=list[str])
 def list_video_files(folder: str) -> list[str]:
     """List mp4 files inside a selected folder (recursively, relative paths)."""
     base = os.path.join(settings.DATA_DIR, folder)
@@ -365,6 +393,14 @@ async def overlay_text_upload(
     outline_color: str = Form("#000000"),
     outline_width: int = Form(2),
     line_spacing: int = Form(4),
+    auto_fit: bool = Form(False),
+    padding_pct: float = Form(5.0),
+    auto_fit_base_font_size: int = Form(120),
+    max_text_coverage_pct: float = Form(18.0),
+    min_text_coverage_pct: float = Form(8.0),
+    auto_fit_min_words_per_line: int = Form(3),
+    auto_fit_max_words_per_line: int = Form(14),
+    auto_fit_min_font_size: int = Form(14),
     font_path: str = Form(""),
 ) -> dict:
     """Upload a video (browser file picker) and apply text overlay; returns download URL."""
@@ -396,6 +432,14 @@ async def overlay_text_upload(
         outline_color=outline_color,
         outline_width=outline_width,
         line_spacing=line_spacing,
+        auto_fit=auto_fit,
+        padding_pct=padding_pct,
+        auto_fit_base_font_size=auto_fit_base_font_size,
+        max_text_coverage_pct=max_text_coverage_pct,
+        min_text_coverage_pct=min_text_coverage_pct,
+        auto_fit_min_words_per_line=auto_fit_min_words_per_line,
+        auto_fit_max_words_per_line=auto_fit_max_words_per_line,
+        auto_fit_min_font_size=auto_fit_min_font_size,
     )
 
     svc = TextOverlayService()

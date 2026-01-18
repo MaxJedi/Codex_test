@@ -266,6 +266,7 @@ def overlay_page() -> str:
             <span class="badge-small" id="uploadBadge" style="display:none;">готово</span>
           </div>
         </div>
+        <div class="output-meta" id="uploadVideoInfo" style="margin-top:-2px;"></div>
       </div>
 
       <div id="serverBlock" style="display:none;">
@@ -336,7 +337,7 @@ def overlay_page() -> str:
             X&nbsp;<input id="centerX" type="range" min="0" max="100" value="50" /><span id="centerXVal">50%</span>
           </div>
           <div class="slider-row" style="margin-top:4px;">
-            Y&nbsp;<input id="centerY" type="range" min="0" max="100" value="80" /><span id="centerYVal">80%</span>
+            Y (верхняя грань)&nbsp;<input id="centerY" type="range" min="0" max="100" value="80" /><span id="centerYVal">80%</span>
           </div>
         </div>
         <div>
@@ -367,6 +368,32 @@ def overlay_page() -> str:
             <input id="baseFontSize" type="number" min="20" max="400" value="120" />
           </div>
         </div>
+        <div class="row">
+          <div>
+            <label for="coverageMinPct">Покрытие текста (мин, %)</label>
+            <input id="coverageMinPct" type="number" min="0" max="100" step="0.1" value="8" />
+          </div>
+          <div>
+            <label for="coverageMaxPct">Покрытие текста (макс, %)</label>
+            <input id="coverageMaxPct" type="number" min="0" max="100" step="0.1" value="18" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="autoFitMinWords">Мин. слов в строке</label>
+            <input id="autoFitMinWords" type="number" min="1" max="50" value="3" />
+          </div>
+          <div>
+            <label for="autoFitMaxWords">Макс. слов в строке</label>
+            <input id="autoFitMaxWords" type="number" min="1" max="50" value="14" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="minFontSize">Мин. размер</label>
+            <input id="minFontSize" type="number" min="6" max="200" value="14" />
+          </div>
+        </div>
       </div>
     </div>
 
@@ -388,6 +415,7 @@ def overlay_page() -> str:
     const serverBlock = document.getElementById('serverBlock');
     const videoUpload = document.getElementById('videoUpload');
     const uploadBadge = document.getElementById('uploadBadge');
+    const uploadVideoInfo = document.getElementById('uploadVideoInfo');
     const pathInput = document.getElementById('pathInput');
     const loadBtn = document.getElementById('loadBtn');
     const upBtn = document.getElementById('upBtn');
@@ -408,6 +436,11 @@ def overlay_page() -> str:
     const autoFitBlock = document.getElementById('autoFitBlock');
     const paddingPctInput = document.getElementById('paddingPct');
     const baseFontSizeInput = document.getElementById('baseFontSize');
+    const coverageMinInput = document.getElementById('coverageMinPct');
+    const coverageMaxInput = document.getElementById('coverageMaxPct');
+    const autoFitMinWordsInput = document.getElementById('autoFitMinWords');
+    const autoFitMaxWordsInput = document.getElementById('autoFitMaxWords');
+    const minFontSizeInput = document.getElementById('minFontSize');
     const applyBtn = document.getElementById('applyBtn');
     const statusText = document.getElementById('statusText');
     const previewVideo = document.getElementById('previewVideo');
@@ -454,10 +487,30 @@ def overlay_page() -> str:
 
     videoUpload.addEventListener('change', async () => {
       uploadBadge.style.display = 'none';
+      uploadVideoInfo.textContent = '';
       const file = videoUpload.files && videoUpload.files[0];
       if (!file) return;
       uploadBadge.style.display = 'inline-block';
       uploadBadge.textContent = file.name;
+
+      // Client-side metadata (resolution, duration) for uploaded file
+      try {
+        const url = URL.createObjectURL(file);
+        const v = document.createElement('video');
+        v.preload = 'metadata';
+        v.src = url;
+        v.muted = true;
+        v.playsInline = true;
+        v.addEventListener('loadedmetadata', () => {
+          const wh = (v.videoWidth && v.videoHeight) ? (v.videoWidth + '×' + v.videoHeight) : '—';
+          const dur = (v.duration && isFinite(v.duration)) ? (v.duration.toFixed(1) + 's') : '—';
+          const sizeMb = (file.size != null) ? (file.size / (1024 * 1024)).toFixed(2) + ' MB' : '—';
+          uploadVideoInfo.textContent = 'Файл: ' + file.name + ' · Размер: ' + sizeMb + ' · Разрешение: ' + wh + ' · Длительность: ' + dur;
+          URL.revokeObjectURL(url);
+        }, { once: true });
+      } catch (e) {
+        // ignore
+      }
     });
 
     autoFitToggle.addEventListener('change', () => {
@@ -515,7 +568,17 @@ def overlay_page() -> str:
         const info = await res.json();
         const wh = (info.width && info.height) ? (info.width + '×' + info.height) : '—';
         const dur = (info.duration_sec != null) ? (info.duration_sec.toFixed(1) + 's') : '—';
-        videoInfo.textContent = 'Разрешение: ' + wh + ' · Длительность: ' + dur;
+        const fps = (info.fps != null) ? (info.fps.toFixed(2) + ' fps') : '—';
+        const codec = info.codec || '—';
+        const sizeMb = (info.size_bytes != null) ? (info.size_bytes / (1024 * 1024)).toFixed(2) + ' MB' : '—';
+        const br = (info.bit_rate != null) ? Math.round(info.bit_rate / 1000) + ' kbps' : '—';
+        videoInfo.textContent =
+          'Разрешение: ' + wh +
+          ' · Длительность: ' + dur +
+          ' · FPS: ' + fps +
+          ' · Codec: ' + codec +
+          ' · Размер: ' + sizeMb +
+          ' · Bitrate: ' + br;
       } catch (e) {
         videoInfo.textContent = 'Не удалось получить информацию о видео';
       }
@@ -574,6 +637,11 @@ def overlay_page() -> str:
         cfg.auto_fit = true;
         cfg.padding_pct = parseFloat(paddingPctInput.value || '5');
         cfg.auto_fit_base_font_size = parseInt(baseFontSizeInput.value || '120', 10);
+        cfg.max_text_coverage_pct = parseFloat(coverageMaxInput.value || '18');
+        cfg.min_text_coverage_pct = parseFloat(coverageMinInput.value || '8');
+        cfg.auto_fit_min_words_per_line = parseInt(autoFitMinWordsInput.value || '3', 10);
+        cfg.auto_fit_max_words_per_line = parseInt(autoFitMaxWordsInput.value || '14', 10);
+        cfg.auto_fit_min_font_size = parseInt(minFontSizeInput.value || '14', 10);
       }
 
       setStatus('Обработка видео… Это может занять время.');
@@ -602,6 +670,16 @@ def overlay_page() -> str:
           form.append('outline_color', cfg.outline_color);
           form.append('outline_width', String(cfg.outline_width));
           form.append('line_spacing', String(cfg.line_spacing));
+          if (autoFitEnabled) {
+            form.append('auto_fit', 'true');
+            form.append('padding_pct', String(cfg.padding_pct));
+            form.append('auto_fit_base_font_size', String(cfg.auto_fit_base_font_size));
+            form.append('max_text_coverage_pct', String(cfg.max_text_coverage_pct));
+            form.append('min_text_coverage_pct', String(cfg.min_text_coverage_pct));
+            form.append('auto_fit_min_words_per_line', String(cfg.auto_fit_min_words_per_line));
+            form.append('auto_fit_max_words_per_line', String(cfg.auto_fit_max_words_per_line));
+            form.append('auto_fit_min_font_size', String(cfg.auto_fit_min_font_size));
+          }
           res = await fetch('/content/overlay_text_upload', { method: 'POST', body: form });
         } else {
           const opt = fileSelect.selectedOptions[0];
