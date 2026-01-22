@@ -32,6 +32,17 @@ def _normalize_ffmpeg_color(color: str) -> str:
     return c or "white"
 
 
+def _escape_drawtext_value(value: str) -> str:
+    # Escape for ffmpeg drawtext when using ":" as option separator.
+    # Keep it conservative and predictable.
+    s = value.replace("\\", "\\\\")
+    s = s.replace(":", "\\:")
+    s = s.replace("'", "\\'")
+    s = s.replace("\n", "\\n")
+    s = s.replace("\r", "")
+    return s
+
+
 def _probe_video_size(path: str) -> tuple[int, int]:
     cmd = [
         "ffprobe",
@@ -120,6 +131,152 @@ def _compute_position(cfg: TextOverlayConfig) -> tuple[str, str]:
 class TextOverlayService:
     """Service to apply text overlay on existing videos using ffmpeg drawtext."""
 
+    def _fits_in_frame(
+        self,
+        *,
+        video_width: int,
+        video_height: int,
+        padding_x: int,
+        padding_y: int,
+        cfg: TextOverlayConfig,
+        box_w: float,
+        box_h: float,
+    ) -> bool:
+        # Position constraints are approximated using the same box model as _estimate_text_box_pixels.
+        cx_px = float(cfg.center_x) * float(video_width)
+        cy_px = float(cfg.center_y) * float(video_height)  # top edge
+
+        left_limit = float(padding_x)
+        right_limit = float(video_width - padding_x)
+        top_limit = float(padding_y)
+        bottom_limit = float(video_height - padding_y)
+
+        if cfg.align == "center":
+            left = cx_px - box_w / 2.0
+            right = cx_px + box_w / 2.0
+        elif cfg.align == "left":
+            left = cx_px
+            right = cx_px + box_w
+        else:  # right
+            left = cx_px - box_w
+            right = cx_px
+
+        top = cy_px
+        bottom = cy_px + box_h
+
+        return left >= left_limit and right <= right_limit and top >= top_limit and bottom <= bottom_limit
+
+    def _build_drawtext_filter(self, render_config: TextOverlayConfig) -> str:
+        wrapped = _wrap_text(render_config.text, render_config.max_words_per_line)
+        text_for_filter = wrapped # Не применять escape_drawtext_value, т.к. это не нужно
+        x_expr, y_expr = _compute_position(render_config)
+        align_map = {"left": "L+M", "center": "C+M", "right": "R+M"}
+        text_align = align_map.get(render_config.align, "C+M")
+
+        font_color = _normalize_ffmpeg_color(render_config.font_color)
+        outline_color = _normalize_ffmpeg_color(render_config.outline_color)
+        fontfile = render_config.font_path or settings.DRAW_TEXT_FONT_PATH
+        fontfile = _escape_drawtext_value(fontfile)
+
+        draw_opts = [
+            f"fontfile='{fontfile}'",
+            f"text='{text_for_filter}'",
+            "box=1",
+            "boxcolor=0x000000@0.0",
+            "boxborderw=0",
+            f"text_align={text_align}",
+            f"fontsize={render_config.font_size}",
+            f"fontcolor={font_color}",
+            f"line_spacing={render_config.line_spacing}",
+            f"bordercolor={outline_color}",
+            f"borderw={render_config.outline_width}",
+            f"x={x_expr}",
+            f"y={y_expr}",
+        ]
+        return "drawtext=" + ":".join(draw_opts)
+
+    def apply_texts_on_video(
+        self,
+        input_video: str,
+        configs: list[TextOverlayConfig],
+        *,
+        output_path: str,
+    ) -> str:
+        if not os.path.exists(input_video):
+            raise FileNotFoundError(f"Input video not found: {input_video}")
+        if not configs:
+            raise ValueError("configs must be non-empty")
+
+        base_dir = os.path.dirname(output_path) or os.path.dirname(input_video) or settings.DATA_DIR
+        ensure_dir(base_dir)
+
+        render_configs: list[TextOverlayConfig] = []
+        for cfg in configs:
+            render_cfg = self._auto_fit_by_coverage(input_video, cfg) if cfg.auto_fit else cfg
+            render_configs.append(render_cfg)
+
+        vf = ",".join(self._build_drawtext_filter(rc) for rc in render_configs)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_video,
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            output_path,
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_path
+
+    def apply_topic_title_and_description(
+        self,
+        input_video: str,
+        *,
+        title_cfg: TextOverlayConfig,
+        description_cfg: TextOverlayConfig,
+        output_path: str,
+        description_gap_px: int | None = None,
+    ) -> str:
+        vw, vh = _probe_video_size(input_video)
+
+        fitted_title = self._auto_fit_by_coverage(input_video, title_cfg) if title_cfg.auto_fit else title_cfg
+        title_wrapped = _wrap_text(fitted_title.text, fitted_title.max_words_per_line)
+        _, title_box_h = _estimate_text_box_pixels(
+            title_wrapped,
+            font_size=int(fitted_title.font_size),
+            line_spacing=int(fitted_title.line_spacing),
+        )
+
+        gap_px = int(description_gap_px) if description_gap_px is not None else int(fitted_title.font_size * 0.55 + 8)
+        desc_y = float(fitted_title.center_y) + (float(title_box_h) + float(gap_px)) / float(max(1, vh))
+        desc_y = max(0.0, min(desc_y, 1.0))
+
+        prepared_desc = description_cfg.model_copy(update={"center_y": desc_y})
+        fitted_desc = self._auto_fit_by_coverage(input_video, prepared_desc) if prepared_desc.auto_fit else prepared_desc
+
+        # Ensure description fits in visible area with padding
+        padding_y = int(vh * float(fitted_desc.padding_pct or 0.0) / 100.0)
+        _, desc_box_h = _estimate_text_box_pixels(
+            _wrap_text(fitted_desc.text, fitted_desc.max_words_per_line),
+            font_size=int(fitted_desc.font_size),
+            line_spacing=int(fitted_desc.line_spacing),
+        )
+        max_top = max(0.0, 1.0 - (float(padding_y) + float(desc_box_h)) / float(max(1, vh)))
+        if fitted_desc.center_y > max_top:
+            fitted_desc = fitted_desc.model_copy(update={"center_y": max_top})
+
+        return self.apply_texts_on_video(
+            input_video,
+            [fitted_title, fitted_desc],
+            output_path=output_path,
+        )
+
     def _auto_fit_by_coverage(self, input_video: str, config: TextOverlayConfig) -> TextOverlayConfig:
         vw, vh = _probe_video_size(input_video)
         padding_x = int(vw * float(config.padding_pct or 0.0) / 100.0)
@@ -165,6 +322,17 @@ class TextOverlayService:
             if box_w > usable_w or box_h > usable_h:
                 continue
 
+            if not self._fits_in_frame(
+                video_width=vw,
+                video_height=vh,
+                padding_x=padding_x,
+                padding_y=padding_y,
+                cfg=config,
+                box_w=box_w,
+                box_h=box_h,
+            ):
+                continue
+
             candidates.append((fs, current_words, coverage))
 
             if min_pct <= coverage <= max_pct:
@@ -202,63 +370,7 @@ class TextOverlayService:
             name, ext = os.path.splitext(base_name)
             output_path = os.path.join(base_dir, f"{name}_text{ext or '.mp4'}")
 
-        render_config = config
-        if config.auto_fit:
-            render_config = self._auto_fit_by_coverage(input_video, config)
-
-        wrapped = _wrap_text(render_config.text, render_config.max_words_per_line)
-        text_escaped = wrapped
-        x_expr, y_expr = _compute_position(render_config)
-        align_map = {
-            "left": "L+M",
-            "center": "C+M",
-            "right": "R+M",
-        }
-        text_align = align_map.get(render_config.align, "C+M")
-
-        # Common drawtext options
-        text_for_filter = text_escaped
-        font_color = _normalize_ffmpeg_color(render_config.font_color)
-        outline_color = _normalize_ffmpeg_color(render_config.outline_color)
-        draw_opts = [
-            "fontfile=/home/alleftinna/python/FABRIC/data/fonts/Lorenzo Sans Bold.ttf",
-            f"text='{text_for_filter}'",
-            "box=1",
-            "boxcolor=0x000000@0.0",
-            "boxborderw=0",
-            f"text_align={text_align}",
-            f"fontsize={render_config.font_size}",
-            f"fontcolor={font_color}",
-            f"line_spacing={render_config.line_spacing}",
-            f"bordercolor={outline_color}",
-            f"borderw={render_config.outline_width}",
-            f"x={x_expr}",
-            f"y={y_expr}",
-        ]
-        # if render_config.font_path:
-        #     # NOTE: ffmpeg drawtext expects fontfile path; keep as-is (no custom escaping helper here).
-        #     draw_opts.insert(0, f"fontfile='{render_config.font_path}'")
-
-        drawtext = "drawtext=" + ":".join(draw_opts)
-        print(drawtext)
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            input_video,
-            "-vf",
-            drawtext,
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "copy",
-            output_path,
-        ]
-
-        # Use subprocess with minimal shell involvement
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return output_path
+        render_config = self._auto_fit_by_coverage(input_video, config) if config.auto_fit else config
+        return self.apply_texts_on_video(input_video, [render_config], output_path=output_path)
 
 

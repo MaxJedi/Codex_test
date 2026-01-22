@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 import os
 import json
 import re
@@ -6,6 +7,7 @@ import httpx
 import shutil
 import tempfile
 import subprocess
+import urllib.parse
 
 from app.schemas.content import Scenario, Storyboard, GeneratedVideo
 from app.services import make_ru_scenario, plan_timeline, RunwayVideoService
@@ -14,6 +16,8 @@ from app.services.storage_service import ensure_dir, save_json
 from app.services.media_assembly_service import extract_last_frame, concatenate_videos_in_dir, overlay_title_text
 from app.routers.media import analyze
 from app.schemas import Transcript, Shot, KeyObject, TextOverlayConfig
+from app.schemas.topics import TopicsGenerateRequest, TopicsGenerateResponse, TopicsOverlayRequest, TopicsOverlayResponse, TopicsOverlayItem
+from app.schemas.topics import TopicIdea, TopicsOverlayParams
 from app.services.storage_service import read_json
 from app.services.query_service import generate_search_query
 from app.services.query_service import generate_reels_ideas, generate_reel_visual_prompt
@@ -22,6 +26,7 @@ from app.services.stt_service import transcribe
 from app.services.vision_service import detect_shots
 from app.integrations import cobalt
 from app.services.text_overlay_service import TextOverlayService
+from app.services.topics_service import generate_topics
 import datetime
 import logging
 logger = logging.getLogger(__name__)
@@ -34,6 +39,15 @@ def _safe_realpath(path: str) -> str:
     if not real.startswith(root.rstrip(os.sep) + os.sep) and real != root:
         raise HTTPException(403, f"path is outside FILE_BROWSER_ROOT: {settings.FILE_BROWSER_ROOT}")
     return real
+
+
+@router.get("/fs_download")
+def fs_download(path: str):
+    """Download any file under FILE_BROWSER_ROOT."""
+    real = _safe_realpath(path)
+    if not os.path.isfile(real):
+        raise HTTPException(404, "File not found")
+    return FileResponse(real, filename=os.path.basename(real))
 
 
 @router.get("/fs_ls")
@@ -62,6 +76,139 @@ def fs_ls(path: str) -> dict:
         "dirs": dirs,
         "files": mp4s,
     }
+
+
+@router.post("/topics_generate", response_model=TopicsGenerateResponse)
+def topics_generate(req: TopicsGenerateRequest) -> TopicsGenerateResponse:
+    topics = generate_topics(req.n, hint=req.hint)
+    return TopicsGenerateResponse(topics=topics)
+
+
+@router.post("/topics_overlay_batch", response_model=TopicsOverlayResponse)
+def topics_overlay_batch(req: TopicsOverlayRequest) -> TopicsOverlayResponse:
+    src = _safe_realpath(req.path)
+    if not os.path.isfile(src):
+        raise HTTPException(404, f"Not a file: {src}")
+
+    out_dir = os.path.join(os.path.dirname(src), "overlay_topics")
+    ensure_dir(out_dir)
+
+    p = req.params
+    align = p.align if p.align in ("left", "center", "right") else "center"
+
+    results: list[TopicsOverlayItem] = []
+    svc = TextOverlayService()
+
+    for idx, topic in enumerate(req.topics, start=1):
+        safe = re.sub(r"[^a-zA-Z0-9а-яА-Я_-]+", "_", topic.title).strip("_")
+        safe = safe[:60] if safe else f"topic_{idx:02d}"
+        output_path = os.path.join(out_dir, f"{idx:02d}_{safe}.mp4")
+
+        title_cfg = TextOverlayConfig(
+            text=topic.title,
+            font_path=p.font_path,
+            font_size=p.min_font_size,
+            max_words_per_line=p.words_max,
+            align=align,
+            center_x=p.center_x,
+            center_y=p.title_y,
+            font_color=p.font_color,
+            outline_color=p.outline_color,
+            outline_width=p.outline_width,
+            line_spacing=p.line_spacing,
+            auto_fit=True,
+            padding_pct=p.padding_pct,
+            auto_fit_base_font_size=p.base_font_size,
+            auto_fit_min_font_size=p.min_font_size,
+            auto_fit_min_words_per_line=p.words_min,
+            auto_fit_max_words_per_line=p.words_max,
+            min_text_coverage_pct=p.coverage_min_pct,
+            max_text_coverage_pct=p.coverage_max_pct,
+        )
+
+        desc_base = max(p.min_font_size, int(p.base_font_size * 0.75))
+        desc_cfg = TextOverlayConfig(
+            text=topic.description,
+            font_path=p.font_path,
+            font_size=p.min_font_size,
+            max_words_per_line=p.words_max,
+            align=align,
+            center_x=p.center_x,
+            center_y=min(1.0, p.title_y + 0.06),
+            font_color=p.font_color,
+            outline_color=p.outline_color,
+            outline_width=p.outline_width,
+            line_spacing=p.line_spacing,
+            auto_fit=True,
+            padding_pct=p.padding_pct,
+            auto_fit_base_font_size=desc_base,
+            auto_fit_min_font_size=p.min_font_size,
+            auto_fit_min_words_per_line=p.words_min,
+            auto_fit_max_words_per_line=p.words_max,
+            min_text_coverage_pct=p.coverage_min_pct,
+            max_text_coverage_pct=p.coverage_max_pct,
+        )
+
+        try:
+            final_path = svc.apply_topic_title_and_description(
+                src,
+                title_cfg=title_cfg,
+                description_cfg=desc_cfg,
+                output_path=output_path,
+            )
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(500, f"ffmpeg failed for topic '{topic.title}': {e}")
+
+        results.append(
+            TopicsOverlayItem(
+                title=topic.title,
+                description=topic.description,
+                output_path=final_path,
+                download_url="/content/fs_download?path=" + urllib.parse.quote(final_path),
+            )
+        )
+
+    return TopicsOverlayResponse(source_path=src, results=results)
+
+
+@router.post("/topics_overlay_batch_upload", response_model=TopicsOverlayResponse)
+async def topics_overlay_batch_upload(
+    video: UploadFile = File(..., description="Source video file"),
+    topics_json: str = Form(..., description="JSON array of topics [{title, description}, ...]"),
+    params_json: str = Form(..., description="JSON object with overlay params"),
+) -> TopicsOverlayResponse:
+    import uuid
+
+    try:
+        raw_topics = json.loads(topics_json)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"Invalid topics_json: {e}")
+    if not isinstance(raw_topics, list) or not raw_topics:
+        raise HTTPException(400, "topics_json must be a non-empty JSON array")
+
+    topics: list[TopicIdea] = []
+    for item in raw_topics:
+        try:
+            topics.append(TopicIdea.model_validate(item))
+        except Exception as e:
+            raise HTTPException(400, f"Invalid topic item: {e}")
+
+    try:
+        params = TopicsOverlayParams.model_validate(json.loads(params_json))
+    except Exception as e:
+        raise HTTPException(400, f"Invalid params_json: {e}")
+
+    overlay_id = f"topics_{uuid.uuid4().hex[:12]}"
+    out_dir = os.path.join(settings.DATA_DIR, "topics_overlays", overlay_id)
+    ensure_dir(out_dir)
+
+    input_path = os.path.join(out_dir, "input.mp4")
+    with open(input_path, "wb") as f:
+        f.write(await video.read())
+
+    # Reuse same logic as /topics_overlay_batch using the saved file path
+    req_obj = TopicsOverlayRequest(path=input_path, topics=topics, params=params)
+    return topics_overlay_batch(req_obj)
 
 
 @router.get("/video_info")
