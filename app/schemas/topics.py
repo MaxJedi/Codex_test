@@ -1,9 +1,12 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class TopicIdea(BaseModel):
-    title: str = Field(..., min_length=1, max_length=120)
-    description: str = Field(..., min_length=1, max_length=200)
+    title: str
+    description: str
+    long_description: str | None = None
 
 
 class TopicsGenerateRequest(BaseModel):
@@ -16,26 +19,15 @@ class TopicsGenerateResponse(BaseModel):
 
 
 class TopicsOverlayParams(BaseModel):
-    # Layout
-    title_y: float = Field(default=0.12, ge=0.0, le=1.0, description="Y верхней грани заголовка (0..1)")
+    title_y: float = Field(default=0.12, ge=0.0, le=1.0, description="Y позиции заголовка (0..1)")
     padding_pct: float = Field(default=5.0, ge=0.0, le=40.0)
-    line_spacing: int = Field(default=4, ge=0, le=100)
-
-    # Auto-fit
     coverage_min_pct: float = Field(default=8.0, ge=0.0, le=100.0)
     coverage_max_pct: float = Field(default=18.0, ge=0.0, le=100.0)
     words_min: int = Field(default=3, ge=1, le=50)
     words_max: int = Field(default=14, ge=1, le=50)
-    min_font_size: int = Field(default=14, ge=1, le=300)
-    base_font_size: int = Field(default=120, ge=10, le=400)
-
-    # Styling
-    align: str = Field(default="center")
-    center_x: float = Field(default=0.5, ge=0.0, le=1.0)
-    font_color: str = Field(default="#ffffff")
-    outline_color: str = Field(default="#000000")
-    outline_width: int = Field(default=2, ge=0, le=20)
-    font_path: str | None = Field(default=None, description="Путь к шрифту (опционально)")
+    min_font_size: int = Field(default=14, ge=6, le=200)
+    base_font_size: int = Field(default=120, ge=20, le=400)
+    align: Literal["left", "center", "right"] = Field(default="center")
 
 
 class TopicsOverlayRequest(BaseModel):
@@ -47,6 +39,7 @@ class TopicsOverlayRequest(BaseModel):
 class TopicsOverlayItem(BaseModel):
     title: str
     description: str
+    long_description: str | None = None
     output_path: str
     download_url: str | None = None
 

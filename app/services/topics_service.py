@@ -25,6 +25,13 @@ TOPICS_SYSTEM_PROMPT = (
     "- Никаких пояснений, только JSON.\n"
 )
 
+LONG_DESC_SYSTEM_PROMPT = (
+    "Ты редактор. Для каждой темы напиши развёрнутое описание 200-350 слов на русском. "
+    "Описание должно раскрывать тему, предлагать структуру и ключевые тезисы. "
+    "Формат ответа: STRICT JSON вида {\"items\": [{\"title\": \"...\", \"long_description\": \"...\"}, ...]}.\n"
+    "Никаких пояснений, только JSON."
+)
+
 
 def generate_topics(n: int, hint: str | None = None) -> list[TopicIdea]:
     user_prompt = f"Сгенерируй {n} тем."
@@ -66,4 +73,34 @@ def generate_topics(n: int, hint: str | None = None) -> list[TopicIdea]:
             continue
 
     return parsed[:n]
+
+
+def generate_long_descriptions(topics: list[TopicIdea]) -> dict[str, str]:
+    if not topics:
+        return {}
+    items = [{"title": t.title, "description": t.description} for t in topics]
+    resp = _get_client().chat.completions.create(
+        model="gpt-5-mini",
+        messages=[
+            {"role": "system", "content": LONG_DESC_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps({"items": items}, ensure_ascii=False)},
+        ],
+        temperature=1,
+        response_format={"type": "json_object"},
+        timeout=settings.OPENAI_TIMEOUT_SECONDS,
+    )
+    raw = resp.choices[0].message.content or ""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    res: dict[str, str] = {}
+    for item in data.get("items", []) if isinstance(data.get("items"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        long_desc = str(item.get("long_description") or "").strip()
+        if title and long_desc:
+            res[title] = long_desc
+    return res
 

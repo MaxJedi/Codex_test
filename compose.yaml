@@ -2,13 +2,10 @@ services:
   app:
     build: .
     container_name: fabric-app
-    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    restart: always
     env_file:
       - .env
-    environment:
-      COBALT_BASE_URL: http://cobalt-api:9000
 
 
-networks:
-  cobalt-network:
-    external: true
