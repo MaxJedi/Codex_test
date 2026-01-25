@@ -197,67 +197,25 @@
     <div class="card">
       <div class="section-title">2) Видео</div>
       <div class="row">
-        <div>
-          <label>Источник</label>
-          <div class="pill-group" id="sourceGroup">
-            <button type="button" class="pill-btn active" data-value="upload">Загрузить (file picker)</button>
-            <button type="button" class="pill-btn" data-value="server">Серверная папка</button>
-          </div>
+        <div style="flex:2;">
+          <label for="videoUpload">Видео файл</label>
+          <input id="videoUpload" type="file" accept="video/mp4,video/*" />
+        </div>
+        <div style="flex:1;display:flex;align-items:flex-end;gap:8px;">
+          <span class="badge-small" id="uploadBadge" style="display:none;">готово</span>
         </div>
       </div>
-
-      <div id="uploadBlock">
-        <div class="row">
-          <div style="flex:2;">
-            <label for="videoUpload">Видео файл</label>
-            <input id="videoUpload" type="file" accept="video/mp4,video/*" />
-          </div>
-          <div style="flex:1;display:flex;align-items:flex-end;gap:8px;">
-            <span class="badge-small" id="uploadBadge" style="display:none;">готово</span>
-          </div>
-        </div>
-        <div class="output-meta" id="uploadVideoInfo" style="margin-top:-2px;"></div>
-      </div>
-
-      <div id="serverBlock" style="display:none;">
-        <div class="row">
-          <div style="flex:2;">
-            <label for="pathInput">Папка в файловой системе</label>
-            <input id="pathInput" type="text" placeholder="/app/data или /home/..." />
-          </div>
-          <div style="flex:1;display:flex;align-items:flex-end;gap:8px;">
-            <button type="button" class="btn btn-secondary" id="loadBtn" style="margin-top:0;">Загрузить</button>
-            <button type="button" class="btn btn-secondary" id="upBtn" style="margin-top:0;">⬆︎</button>
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label for="fileSelect">Видео / папки</label>
-            <select id="fileSelect"></select>
-          </div>
-        </div>
-        <div class="output-meta" id="videoInfo" style="margin-top:-2px;"></div>
-      </div>
+      <div class="output-meta" id="uploadVideoInfo" style="margin-top:-2px;"></div>
 
       <div class="section-title">Параметры</div>
       <div class="row">
         <div>
           <label for="titleY">Y заголовка (верхняя грань, %)</label>
-          <input id="titleY" type="number" min="0" max="100" value="12" />
+          <input id="titleY" type="number" min="0" max="100" value="20" />
         </div>
         <div>
           <label for="paddingPct">Паддинг (%)</label>
-          <input id="paddingPct" type="number" min="0" max="30" value="5" />
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label for="coverageMinPct">Покрытие (мин, %)</label>
-          <input id="coverageMinPct" type="number" min="0" max="100" step="0.1" value="8" />
-        </div>
-        <div>
-          <label for="coverageMaxPct">Покрытие (макс, %)</label>
-          <input id="coverageMaxPct" type="number" min="0" max="100" step="0.1" value="18" />
+          <input id="paddingPct" type="number" min="0" max="30" value="10" />
         </div>
       </div>
       <div class="row">
@@ -267,17 +225,13 @@
         </div>
         <div>
           <label for="autoFitMaxWords">Макс. слов в строке</label>
-          <input id="autoFitMaxWords" type="number" min="1" max="50" value="14" />
+          <input id="autoFitMaxWords" type="number" min="1" max="50" value="6" />
         </div>
       </div>
       <div class="row">
         <div>
           <label for="minFontSize">Мин. размер текста</label>
-          <input id="minFontSize" type="number" min="6" max="200" value="14" />
-        </div>
-        <div>
-          <label for="baseFontSize">Базовый размер</label>
-          <input id="baseFontSize" type="number" min="20" max="400" value="120" />
+          <input id="minFontSize" type="number" min="6" max="200" value="20" />
         </div>
       </div>
 
@@ -307,27 +261,15 @@
     const selectAllBtn = document.getElementById('selectAllBtn');
     const clearBtn = document.getElementById('clearBtn');
 
-    const sourceGroup = document.getElementById('sourceGroup');
-    const uploadBlock = document.getElementById('uploadBlock');
-    const serverBlock = document.getElementById('serverBlock');
     const videoUpload = document.getElementById('videoUpload');
     const uploadBadge = document.getElementById('uploadBadge');
     const uploadVideoInfo = document.getElementById('uploadVideoInfo');
 
-    const pathInput = document.getElementById('pathInput');
-    const loadBtn = document.getElementById('loadBtn');
-    const upBtn = document.getElementById('upBtn');
-    const fileSelect = document.getElementById('fileSelect');
-    const videoInfo = document.getElementById('videoInfo');
-
     const titleY = document.getElementById('titleY');
     const paddingPct = document.getElementById('paddingPct');
-    const coverageMinPct = document.getElementById('coverageMinPct');
-    const coverageMaxPct = document.getElementById('coverageMaxPct');
     const autoFitMinWords = document.getElementById('autoFitMinWords');
     const autoFitMaxWords = document.getElementById('autoFitMaxWords');
     const minFontSize = document.getElementById('minFontSize');
-    const baseFontSize = document.getElementById('baseFontSize');
 
     const runBtn = document.getElementById('runBtn');
     const runStatus = document.getElementById('runStatus');
@@ -335,26 +277,7 @@
     const previewVideo = document.getElementById('previewVideo');
 
     let currentTopics = [];
-    let selectedVideoPath = null;
     let selectedUploadFile = null;
-
-    function getSourceMode() {
-      const active = sourceGroup.querySelector('.pill-btn.active');
-      return active ? active.dataset.value : 'upload';
-    }
-
-    sourceGroup.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.pill-btn');
-      if (!btn) return;
-      sourceGroup.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const mode = getSourceMode();
-      uploadBlock.style.display = (mode === 'upload') ? 'block' : 'none';
-      serverBlock.style.display = (mode === 'server') ? 'block' : 'none';
-      if (mode === 'server') {
-        await loadFs(pathInput.value);
-      }
-    });
 
     videoUpload.addEventListener('change', async () => {
       uploadBadge.style.display = 'none';
@@ -455,78 +378,6 @@
       }
     });
 
-    async function loadFs(path) {
-      fileSelect.innerHTML = '';
-      videoInfo.textContent = '';
-      selectedVideoPath = null;
-      if (!path) return;
-      try {
-        const res = await fetch('/content/fs_ls?path=' + encodeURIComponent(path));
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        pathInput.value = data.path;
-        const entries = [];
-        if (data.dirs) for (const d of data.dirs) entries.push({ kind: 'dir', name: d });
-        if (data.files) for (const f of data.files) entries.push({ kind: 'file', name: f });
-        if (!entries.length) {
-          const opt = document.createElement('option');
-          opt.value = '';
-          opt.textContent = 'Папка пустая';
-          fileSelect.appendChild(opt);
-          return;
-        }
-        for (const e of entries) {
-          const opt = document.createElement('option');
-          opt.value = e.name;
-          opt.textContent = (e.kind === 'dir' ? '📁 ' : '🎬 ') + e.name;
-          opt.dataset.kind = e.kind;
-          fileSelect.appendChild(opt);
-        }
-      } catch (e) {
-        videoInfo.textContent = 'Ошибка чтения папки: ' + e;
-      }
-    }
-
-    async function loadVideoInfo(absPath) {
-      videoInfo.textContent = '';
-      try {
-        const res = await fetch('/content/video_info?path=' + encodeURIComponent(absPath));
-        if (!res.ok) throw new Error(await res.text());
-        const info = await res.json();
-        const wh = (info.width && info.height) ? (info.width + '×' + info.height) : '—';
-        const dur = (info.duration_sec != null) ? (info.duration_sec.toFixed(1) + 's') : '—';
-        const fps = (info.fps != null) ? (info.fps.toFixed(2) + ' fps') : '—';
-        videoInfo.textContent = 'Выбрано: ' + absPath + ' · ' + wh + ' · ' + dur + ' · ' + fps;
-      } catch (e) {
-        videoInfo.textContent = 'Не удалось получить информацию о видео';
-      }
-    }
-
-    loadBtn.addEventListener('click', () => loadFs(pathInput.value.trim()));
-    upBtn.addEventListener('click', async () => {
-      const p = pathInput.value.trim();
-      if (!p) return;
-      const idx = p.replace(/\/+$/, '').lastIndexOf('/');
-      if (idx <= 0) return;
-      const parent = p.slice(0, idx) || '/';
-      await loadFs(parent);
-    });
-
-    fileSelect.addEventListener('change', async () => {
-      const opt = fileSelect.selectedOptions[0];
-      if (!opt) return;
-      const kind = opt.dataset.kind;
-      const name = opt.value;
-      if (!kind || !name) return;
-      const base = pathInput.value.trim().replace(/\/+$/, '');
-      const abs = base + '/' + name;
-      if (kind === 'dir') {
-        await loadFs(abs);
-      } else {
-        selectedVideoPath = abs;
-        await loadVideoInfo(abs);
-      }
-    });
 
     runBtn.addEventListener('click', async () => {
       const selected = currentTopics.filter(t => t.selected).map(t => ({ title: t.title, description: t.description }));
@@ -534,28 +385,21 @@
         setStatus(runStatus, 'Выберите хотя бы одну тему', true);
         return;
       }
-      const mode = getSourceMode();
-      if (mode === 'server') {
-        if (!selectedVideoPath) {
-          setStatus(runStatus, 'Выберите видео из файловой системы', true);
-          return;
-        }
-      } else {
-        if (!selectedUploadFile) {
-          setStatus(runStatus, 'Выберите видеофайл (upload)', true);
-          return;
-        }
+      if (!selectedUploadFile) {
+        setStatus(runStatus, 'Выберите видеофайл (upload)', true);
+        return;
       }
 
       const params = {
         title_y: parseFloat(titleY.value || '12') / 100.0,
         padding_pct: parseFloat(paddingPct.value || '5'),
-        coverage_min_pct: parseFloat(coverageMinPct.value || '8'),
-        coverage_max_pct: parseFloat(coverageMaxPct.value || '18'),
         words_min: parseInt(autoFitMinWords.value || '3', 10),
-        words_max: parseInt(autoFitMaxWords.value || '14', 10),
-        min_font_size: parseInt(minFontSize.value || '14', 10),
-        base_font_size: parseInt(baseFontSize.value || '120', 10),
+        words_max: parseInt(autoFitMaxWords.value || '6', 10),
+        min_font_size: parseInt(minFontSize.value || '20', 10),
+        // defaults from TextOverlayConfig
+        base_font_size: 100,
+        coverage_min_pct: 35.0,
+        coverage_max_pct: 50.0,
       };
 
       setStatus(runStatus, 'Запуск… (будет создано видео: ' + selected.length + ')');
@@ -564,20 +408,11 @@
       previewVideo.style.display = 'none';
 
       try {
-        let res;
-        if (mode === 'upload') {
-          const form = new FormData();
-          form.append('video', selectedUploadFile);
-          form.append('topics_json', JSON.stringify(selected));
-          form.append('params_json', JSON.stringify(params));
-          res = await fetch('/content/topics_overlay_batch_upload', { method: 'POST', body: form });
-        } else {
-          res = await fetch('/content/topics_overlay_batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: selectedVideoPath, topics: selected, params })
-          });
-        }
+        const form = new FormData();
+        form.append('video', selectedUploadFile);
+        form.append('topics_json', JSON.stringify(selected));
+        form.append('params_json', JSON.stringify(params));
+        const res = await fetch('/content/topics_overlay_batch_upload', { method: 'POST', body: form });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const results = data.results || [];
@@ -654,9 +489,6 @@
     });
 
     // Init
-    if (pathInput) {
-      pathInput.value = '/app/data';
-    }
   </script>
 </body>
 </html>

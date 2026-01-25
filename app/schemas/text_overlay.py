@@ -16,10 +16,10 @@ class TextOverlayConfig(BaseModel):
     outline_width: int = Field(default=2, ge=0, le=20, description="Толщина обводки")
     line_spacing: int = Field(default=4, ge=0, le=100, description="Межстрочный интервал")
     auto_fit: bool = Field(default=False, description="Автоподбор размера текста под ширину кадра (без ручного fontsize)")
-    padding_pct: float = Field(default=5.0, ge=0.0, le=40.0, description="Отступы от краев кадра в процентах (для auto_fit)")
+    padding_pct: float = Field(default=10.0, ge=0.0, le=40.0, description="Отступы от краев кадра в процентах (для auto_fit)")
     auto_fit_base_font_size: int = Field(default=100, ge=10, le=400, description="Базовый fontsize для отрисовки перед масштабированием (auto_fit)")
     auto_fit_min_font_size: int = Field(
-        default=20,
+        default=24,
         ge=1,
         le=300,
         description="Минимальный fontsize при auto_fit (когда нужно ужимать текст)",
