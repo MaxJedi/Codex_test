@@ -24,4 +24,4 @@ def health():
 
 # Include routers
 app.include_router(ui_router)
-# app.include_router(content_router)
+app.include_router(content_router)
