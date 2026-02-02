@@ -25,10 +25,13 @@ RUN apt-get update \
         libtheora-dev \
         libfreetype6-dev \
         libfontconfig1-dev \
+        libfribidi-dev \
+        libharfbuzz-dev \
         git \
     && cd /tmp \
     && git clone --depth 1 --branch n6.1.1 https://git.ffmpeg.org/ffmpeg.git ffmpeg-src \
     && cd ffmpeg-src \
+    && pkg-config --exists freetype2 || (echo "ERROR: freetype2 not found by pkg-config" && exit 1) \
     && ./configure \
         --prefix=/usr/local \
         --enable-gpl \
@@ -41,6 +44,8 @@ RUN apt-get update \
         --enable-libtheora \
         --enable-libfreetype \
         --enable-libfontconfig \
+        --enable-libfribidi \
+        --enable-libharfbuzz \
         --enable-nonfree \
         --disable-debug \
         --disable-doc \
@@ -52,10 +57,16 @@ RUN apt-get update \
     && ldconfig \
     && cd / \
     && rm -rf /tmp/ffmpeg-src \
+    && apt-get install -y --no-install-recommends \
+        libfreetype6 \
+        libfontconfig1 \
+        libfribidi0 \
+        libharfbuzz0b \
     && apt-get purge -y build-essential yasm nasm cmake pkg-config git \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/* \
-    && ffmpeg -version | head -1
+    && ffmpeg -version | head -1 \
+    && ffmpeg -filters 2>/dev/null | grep -q drawtext || (echo "ERROR: drawtext filter not available" && exit 1)
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
@@ -64,6 +75,6 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
 
 

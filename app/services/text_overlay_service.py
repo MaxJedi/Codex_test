@@ -168,7 +168,9 @@ class TextOverlayService:
 
     def _build_drawtext_filter(self, render_config: TextOverlayConfig) -> str:
         wrapped = _wrap_text(render_config.text, render_config.max_words_per_line)
-        text_for_filter = wrapped # Не применять escape_drawtext_value, т.к. это не нужно
+        # Экранируем специальные символы в тексте для drawtext
+        # Двоеточие нужно экранировать, так как оно используется как разделитель параметров
+        text_for_filter = wrapped.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
         x_expr, y_expr = _compute_position(render_config)
         align_map = {"left": "L+M", "center": "C+M", "right": "R+M"}
         text_align = align_map.get(render_config.align, "C+M")
@@ -231,7 +233,20 @@ class TextOverlayService:
             "copy",
             output_path,
         ]
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            # Логируем ошибку для отладки
+            error_msg = f"ffmpeg failed with code {e.returncode}\n"
+            error_msg += f"Command: {' '.join(cmd)}\n"
+            error_msg += f"Stderr: {e.stderr}\n"
+            error_msg += f"Stdout: {e.stdout}\n"
+            raise RuntimeError(error_msg) from e
         return output_path
 
     def apply_topic_title_and_description(
