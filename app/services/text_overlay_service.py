@@ -167,25 +167,39 @@ class TextOverlayService:
         return left >= left_limit and right <= right_limit and top >= top_limit and bottom <= bottom_limit
 
     def _build_drawtext_filter(self, render_config: TextOverlayConfig) -> str:
-        wrapped = _wrap_text(render_config.text, render_config.max_words_per_line)
-        # Экранируем специальные символы в тексте для drawtext
-        # Двоеточие нужно экранировать, так как оно используется как разделитель параметров
-        text_for_filter = wrapped.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
-        x_expr, y_expr = _compute_position(render_config)
+        text_for_filter = _wrap_text(render_config.text, render_config.max_words_per_line)
+        
+        cx = render_config.center_x
+        cy = render_config.center_y
+        
+        # Горизонтальное выравнивание
+        if render_config.align == "center":
+            x_expr = f"w*{cx}-text_w/2"
+        elif render_config.align == "left":
+            x_expr = f"w*{cx}"
+        else:
+            x_expr = f"w*{cx}-text_w"
+        
+        # Вертикальное позиционирование
+        # Используем фиксированные отступы для box
+        box_padding = int(render_config.font_size * 0.15)  # 15% от размера шрифта
+        y_expr = f"h*{cy}-text_h/2+ascent+{box_padding}"
+        
         align_map = {"left": "L+M", "center": "C+M", "right": "R+M"}
         text_align = align_map.get(render_config.align, "C+M")
-
+        
         font_color = _normalize_ffmpeg_color(render_config.font_color)
         outline_color = _normalize_ffmpeg_color(render_config.outline_color)
         fontfile = render_config.font_path or settings.DRAW_TEXT_FONT_PATH
         fontfile = _escape_drawtext_value(fontfile)
-
+        
+        # Используем прозрачный box с отступами для защиты от обрезания
         draw_opts = [
             f"fontfile='{fontfile}'",
             f"text='{text_for_filter}'",
-            "box=1",
-            "boxcolor=0x000000@0.0",
-            "boxborderw=0",
+            "box=1",  # Включаем box для защиты
+            "boxcolor=0x000000@0.0",  # Полностью прозрачный
+            f"boxborderw={box_padding}",  # Отступы внутри box
             f"text_align={text_align}",
             f"fontsize={render_config.font_size}",
             f"fontcolor={font_color}",
@@ -194,7 +208,10 @@ class TextOverlayService:
             f"borderw={render_config.outline_width}",
             f"x={x_expr}",
             f"y={y_expr}",
+            "fix_bounds=1",
+            "alpha='1'",
         ]
+        
         return "drawtext=" + ":".join(draw_opts)
 
     def apply_texts_on_video(
@@ -234,7 +251,7 @@ class TextOverlayService:
             output_path,
         ]
         try:
-            subprocess.run(
+            result = subprocess.run(
                 cmd,
                 check=True,
                 capture_output=True,
