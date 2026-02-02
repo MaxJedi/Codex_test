@@ -11,14 +11,51 @@ RUN apt-get update \
         curl \
         wget \
         xz-utils \
+        build-essential \
+        yasm \
+        nasm \
+        cmake \
+        pkg-config \
+        libx264-dev \
+        libx265-dev \
+        libvpx-dev \
+        libmp3lame-dev \
+        libopus-dev \
+        libvorbis-dev \
+        libtheora-dev \
+        libfreetype6-dev \
+        libfontconfig1-dev \
+        git \
     && cd /tmp \
-    && wget https://github.com/BtbN/FFmpeg-Builds/releases/download/6.1.1/ffmpeg-6.1.1-linux64-gpl.tar.xz \
-    && tar -xf ffmpeg-6.1.1-linux64-gpl.tar.xz \
-    && mv ffmpeg-6.1.1-linux64-gpl/bin/ffmpeg /usr/local/bin/ \
-    && mv ffmpeg-6.1.1-linux64-gpl/bin/ffprobe /usr/local/bin/ \
-    && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
-    && rm -rf /tmp/ffmpeg-6.1.1-linux64-gpl* \
-    && rm -rf /var/lib/apt/lists/*
+    && git clone --depth 1 --branch n6.1.1 https://git.ffmpeg.org/ffmpeg.git ffmpeg-src \
+    && cd ffmpeg-src \
+    && ./configure \
+        --prefix=/usr/local \
+        --enable-gpl \
+        --enable-libx264 \
+        --enable-libx265 \
+        --enable-libvpx \
+        --enable-libmp3lame \
+        --enable-libopus \
+        --enable-libvorbis \
+        --enable-libtheora \
+        --enable-libfreetype \
+        --enable-libfontconfig \
+        --enable-nonfree \
+        --disable-debug \
+        --disable-doc \
+        --disable-ffplay \
+        --extra-cflags="-O3" \
+        --extra-ldflags="-Wl,-rpath,/usr/local/lib" \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd / \
+    && rm -rf /tmp/ffmpeg-src \
+    && apt-get purge -y build-essential yasm nasm cmake pkg-config git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version | head -1
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
