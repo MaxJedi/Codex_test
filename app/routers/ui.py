@@ -16,3 +16,9 @@ def topics_page(request: Request):
     """Serve topics generator UI."""
     return templates.TemplateResponse("topics.html", {"request": request})
 
+
+@router.get("/carousel")
+def carousel_page(request: Request):
+    """Serve Instagram carousel generator UI."""
+    return templates.TemplateResponse("carousel.html", {"request": request})
+

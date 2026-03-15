@@ -2,9 +2,11 @@ from fastapi import FastAPI
 
 from app.routers import ui_router, content_router
 from app.core.secrets import ensure_secrets_dir
+from app.core.logging_config import setup_logging
 
 # Ensure secrets directory exists
 ensure_secrets_dir()
+setup_logging()
 
 app = FastAPI(
     title="Fabric API",

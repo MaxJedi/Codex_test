@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>FABRIC — Instagram Carousel Builder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #020617;
+      --card: #0f172a;
+      --card-2: #111827;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --line: #1e293b;
+      --accent: #39ff88;
+      --accent-2: #38bdf8;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #0f172a 0, var(--bg) 42%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .page {
+      width: 100%;
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+      display: grid;
+      gap: 20px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      flex-wrap: wrap;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .hero p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      max-width: 860px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+      gap: 20px;
+    }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(15,23,42,0.98), rgba(15,23,42,0.92));
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 18px;
+      box-shadow: 0 20px 50px rgba(2, 6, 23, 0.55);
+      padding: 18px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .toggle-row {
+      display: flex;
+      gap: 16px;
+      margin: 8px 0 10px;
+      flex-wrap: wrap;
+    }
+    .toggle-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: none;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+    }
+    .toggle-row input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    .field {
+      flex: 1;
+      min-width: 180px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    input, textarea, select {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(2,6,23,0.45);
+      color: var(--text);
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 10px 24px rgba(56,189,248,0.2);
+    }
+    button.secondary {
+      background: rgba(15,23,42,0.95);
+      color: var(--text);
+      border: 1px solid var(--line);
+      box-shadow: none;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+      box-shadow: none;
+    }
+    .status {
+      min-height: 18px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .status.error { color: var(--danger); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 6px 12px;
+      background: rgba(57,255,136,0.08);
+      border: 1px solid rgba(57,255,136,0.25);
+      color: var(--accent);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .meta span {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.85);
+      border: 1px solid var(--line);
+    }
+    .slides {
+      display: grid;
+      gap: 12px;
+    }
+    .slide-editor {
+      border: 1px solid rgba(148,163,184,0.16);
+      background: rgba(2,6,23,0.32);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .slide-editor h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+    .bullets {
+      display: grid;
+      gap: 8px;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .preview-item {
+      background: rgba(2,6,23,0.4);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 10px;
+    }
+    .preview-item img {
+      width: 100%;
+      display: block;
+      border-radius: 12px;
+      aspect-ratio: 4 / 5;
+      object-fit: cover;
+      background: #020617;
+      border: 1px solid rgba(148,163,184,0.16);
+    }
+    .preview-item a, .downloads a {
+      color: var(--accent-2);
+      text-decoration: none;
+    }
+    .downloads {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    .hr {
+      height: 1px;
+      background: var(--line);
+      margin: 14px 0;
+    }
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <h1>Instagram Carousel Builder</h1>
+        <p>Загрузите референсы, задайте тему или свой текст, отредактируйте слайды на обязательном approval-этапе и получите готовый пакет PNG/JPG для Instagram feed 1080×1350.</p>
+      </div>
+      <div class="badge" id="jobBadge">Job not created</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>1. Input</h2>
+        <div class="row">
+          <div class="field">
+            <label for="topic">Topic</label>
+            <input id="topic" type="text" placeholder="Например: как перестать откладывать задачи" />
+          </div>
+          <div class="field">
+            <label for="lang">Language</label>
+            <select id="lang">
+              <option value="auto">auto</option>
+              <option value="ru" selected>ru</option>
+              <option value="en">en</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="slideCount">Slides</label>
+            <input id="slideCount" type="number" min="1" max="20" value="7" />
+          </div>
+          <div class="field">
+            <label for="exportFormat">Export</label>
+            <select id="exportFormat">
+              <option value="png" selected>png</option>
+              <option value="jpg">jpg</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="userText">User Text (optional)</label>
+          <textarea id="userText" placeholder="Если у вас уже есть готовый текст карусели, вставьте его сюда. Иначе текст будет сгенерирован по topic."></textarea>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row">
+          <div class="field">
+            <label for="refStyleImages">Style References (1-5)</label>
+            <input id="refStyleImages" type="file" accept="image/*" multiple />
+          </div>
+          <div class="field">
+            <label for="subjectImage">Subject Image</label>
+            <input id="subjectImage" type="file" accept="image/*" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="brandAssets">Brand Assets</label>
+          <input id="brandAssets" type="file" multiple />
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row">
+          <div class="field">
+            <label for="layoutPreset">Layout Preset</label>
+            <select id="layoutPreset">
+              <option value="hero_right" selected>hero_right</option>
+              <option value="hero_left">hero_left</option>
+              <option value="text_only">text_only</option>
+              <option value="cards_grid">cards_grid</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="heroEnabled">Hero Enabled</label>
+            <select id="heroEnabled">
+              <option value="true" selected>true</option>
+              <option value="false">false</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="heroSide">Hero Side</label>
+            <select id="heroSide">
+              <option value="right" selected>right</option>
+              <option value="left">left</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label for="colorBg">Background</label>
+            <input id="colorBg" type="color" value="#050816" />
+          </div>
+          <div class="field">
+            <label for="colorText">Text</label>
+            <input id="colorText" type="color" value="#F8FAFC" />
+          </div>
+          <div class="field">
+            <label for="colorAccent">Accent</label>
+            <input id="colorAccent" type="color" value="#39FF88" />
+          </div>
+          <div class="field">
+            <label for="colorAccent2">Accent 2</label>
+            <input id="colorAccent2" type="color" value="#38BDF8" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label for="fontH1Size">H1 Size</label>
+            <input id="fontH1Size" type="number" min="24" max="180" value="84" />
+          </div>
+          <div class="field">
+            <label for="fontBodySize">Body Size</label>
+            <input id="fontBodySize" type="number" min="16" max="96" value="40" />
+          </div>
+          <div class="field">
+            <label for="fontCaptionSize">Caption Size</label>
+            <input id="fontCaptionSize" type="number" min="14" max="80" value="32" />
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label for="textCardOutlineEnabled">
+            <input id="textCardOutlineEnabled" type="checkbox" />
+            Показывать обводку подложек текста
+          </label>
+          <label for="allowIllustrationOnLastSlide">
+            <input id="allowIllustrationOnLastSlide" type="checkbox" />
+            Разрешить ассет на завершающем слайде
+          </label>
+        </div>
+
+        <div class="btn-row">
+          <button id="generateBtn">Create Job + Generate Draft</button>
+          <button id="refreshBtn" class="secondary" type="button">Refresh Job Data</button>
+        </div>
+        <div class="status" id="inputStatus"></div>
+        <div class="meta" id="jobMeta"></div>
+      </div>
+
+      <div class="card">
+        <h2>2. Approval</h2>
+        <div class="muted">Этот шаг обязателен: после генерации текста вы можете отредактировать заголовки, буллеты и CTA перед рендером.</div>
+        <div class="btn-row">
+          <button id="approveBtn" class="secondary" type="button" disabled>Approve Edited Text</button>
+          <button id="renderBtn" type="button" disabled>Render Carousel</button>
+        </div>
+        <div class="status" id="approvalStatus"></div>
+        <div class="slides" id="approvalSlides"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3. Outputs</h2>
+      <div class="status" id="renderStatus"></div>
+      <div class="downloads" id="downloads"></div>
+      <div class="preview-grid" id="previewGrid"></div>
+      <div class="code" id="jobSpecInfo"></div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      jobId: null,
+      approvalPayload: null,
+      approved: false,
+    };
+
+    const els = {
+      jobBadge: document.getElementById('jobBadge'),
+      inputStatus: document.getElementById('inputStatus'),
+      approvalStatus: document.getElementById('approvalStatus'),
+      renderStatus: document.getElementById('renderStatus'),
+      jobMeta: document.getElementById('jobMeta'),
+      approvalSlides: document.getElementById('approvalSlides'),
+      previewGrid: document.getElementById('previewGrid'),
+      downloads: document.getElementById('downloads'),
+      jobSpecInfo: document.getElementById('jobSpecInfo'),
+      generateBtn: document.getElementById('generateBtn'),
+      approveBtn: document.getElementById('approveBtn'),
+      renderBtn: document.getElementById('renderBtn'),
+      refreshBtn: document.getElementById('refreshBtn'),
+    };
+
+    function setStatus(el, message, isError = false) {
+      el.textContent = message || '';
+      el.classList.toggle('error', Boolean(isError));
+    }
+
+    function setJobBadge() {
+      els.jobBadge.textContent = state.jobId ? `Job ${state.jobId}` : 'Job not created';
+    }
+
+    function collectStyleVars() {
+      return {
+        export_format: document.getElementById('exportFormat').value,
+        layout_preset: document.getElementById('layoutPreset').value,
+        hero_enabled: document.getElementById('heroEnabled').value === 'true',
+        hero_side: document.getElementById('heroSide').value,
+        color_bg: document.getElementById('colorBg').value,
+        color_text_main: document.getElementById('colorText').value,
+        color_accent: document.getElementById('colorAccent').value,
+        color_accent_2: document.getElementById('colorAccent2').value,
+        font_h1_size: Number(document.getElementById('fontH1Size').value || 84),
+        font_body_size: Number(document.getElementById('fontBodySize').value || 40),
+        font_caption_size: Number(document.getElementById('fontCaptionSize').value || 32),
+        text_card_outline_enabled: document.getElementById('textCardOutlineEnabled').checked,
+        allow_illustration_on_last_slide: document.getElementById('allowIllustrationOnLastSlide').checked,
+      };
+    }
+
+    function appendFiles(formData, key, input) {
+      const files = Array.from(input.files || []);
+      files.forEach(file => formData.append(key, file));
+    }
+
+    function renderApprovalSlides(payload) {
+      els.approvalSlides.innerHTML = '';
+      if (!payload || !payload.slides || !payload.slides.length) {
+        els.approvalSlides.innerHTML = '<div class="muted">Нет слайдов для редактирования.</div>';
+        return;
+      }
+      payload.slides.forEach((slide, index) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'slide-editor';
+        wrapper.dataset.slideId = slide.id;
+        wrapper.innerHTML = `
+          <h3>Slide ${String(index + 1).padStart(2, '0')}</h3>
+          <div class="field">
+            <label>Title</label>
+            <textarea class="slide-title">${slide.title || ''}</textarea>
+          </div>
+          <div class="field">
+            <label>Bullets (one per line)</label>
+            <textarea class="slide-bullets">${(slide.bullets || []).join('\n')}</textarea>
+          </div>
+          <div class="field">
+            <label>Emphasis Words (comma separated)</label>
+            <input class="slide-emphasis" type="text" value="${(slide.emphasis_words || []).join(', ')}" />
+          </div>
+          <div class="field">
+            <label>CTA</label>
+            <input class="slide-cta" type="text" value="${slide.cta || ''}" />
+          </div>
+        `;
+        els.approvalSlides.appendChild(wrapper);
+      });
+    }
+
+    function collectApprovalSlides() {
+      return Array.from(document.querySelectorAll('.slide-editor')).map(node => ({
+        id: node.dataset.slideId,
+        title: node.querySelector('.slide-title').value.trim(),
+        bullets: node.querySelector('.slide-bullets').value.split('\n').map(v => v.trim()).filter(Boolean),
+        emphasis_words: node.querySelector('.slide-emphasis').value.split(',').map(v => v.trim()).filter(Boolean),
+        cta: node.querySelector('.slide-cta').value.trim() || null,
+      }));
+    }
+
+    function renderMeta(config, assets) {
+      els.jobMeta.innerHTML = '';
+      if (!config) return;
+      const entries = [
+        `canvas ${config.canvas.w}×${config.canvas.h}`,
+        `${config.slide_count} slides`,
+        `lang ${config.lang}`,
+        `${(assets?.ref_style_images || []).length} refs`,
+        assets?.subject_image ? 'subject yes' : 'subject no',
+      ];
+      entries.forEach(text => {
+        const item = document.createElement('span');
+        item.textContent = text;
+        els.jobMeta.appendChild(item);
+      });
+    }
+
+    function renderOutputs(jobId, outputs) {
+      els.previewGrid.innerHTML = '';
+      els.downloads.innerHTML = '';
+      els.jobSpecInfo.textContent = '';
+      if (!outputs) return;
+
+      (outputs.slide_items || []).forEach((item, index) => {
+        const card = document.createElement('div');
+        card.className = 'preview-item';
+        card.innerHTML = `
+          <img src="${item.url}" alt="Slide ${index + 1}" loading="lazy" />
+          <div style="margin-top:8px;"><a href="${item.url}" target="_blank">Open slide ${index + 1}</a></div>
+        `;
+        els.previewGrid.appendChild(card);
+      });
+
+      [
+        ['Preview strip', outputs.preview_strip_url],
+        ['Job spec', outputs.job_spec_url],
+        ['ZIP package', outputs.zip_url],
+      ].forEach(([label, url]) => {
+        if (!url) return;
+        const link = document.createElement('a');
+        link.href = url;
+        link.textContent = label;
+        link.target = '_blank';
+        els.downloads.appendChild(link);
+      });
+
+      if (outputs.job_spec_path) {
+        els.jobSpecInfo.textContent = `job_id=${jobId} | job_spec=${outputs.job_spec_path}`;
+      }
+    }
+
+    async function refreshJob() {
+      if (!state.jobId) {
+        setStatus(els.inputStatus, 'Сначала создайте job.', true);
+        return;
+      }
+      const res = await fetch(`/content/carousel/${state.jobId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Не удалось загрузить job');
+      renderMeta(data.config, data.assets);
+      state.approvalPayload = data.approval_payload || null;
+      renderApprovalSlides(state.approvalPayload);
+      renderOutputs(state.jobId, data.outputs);
+      state.approved = data.job?.status === 'approved' || data.job?.status === 'completed';
+      els.approveBtn.disabled = !state.approvalPayload;
+      els.renderBtn.disabled = !state.approved && data.job?.status !== 'completed';
+      setStatus(els.renderStatus, data.job?.status ? `Status: ${data.job.status}` : '');
+    }
+
+    async function createJobAndDraft() {
+      els.generateBtn.disabled = true;
+      setStatus(els.inputStatus, 'Создаю job и генерирую draft...');
+      try {
+        const formData = new FormData();
+        formData.append('topic', document.getElementById('topic').value.trim());
+        formData.append('lang', document.getElementById('lang').value);
+        formData.append('slide_count', document.getElementById('slideCount').value);
+        formData.append('user_text', document.getElementById('userText').value);
+        formData.append('style_vars_json', JSON.stringify(collectStyleVars()));
+        appendFiles(formData, 'ref_style_images', document.getElementById('refStyleImages'));
+        appendFiles(formData, 'brand_assets', document.getElementById('brandAssets'));
+        const subject = document.getElementById('subjectImage');
+        if (subject.files && subject.files[0]) {
+          formData.append('subject_image', subject.files[0]);
+        }
+
+        const createRes = await fetch('/content/carousel/jobs', {
+          method: 'POST',
+          body: formData,
+        });
+        const createData = await createRes.json();
+        if (!createRes.ok) throw new Error(createData.detail || 'Не удалось создать job');
+
+        state.jobId = createData.job_id;
+        setJobBadge();
+        renderMeta(createData.config, createData.assets);
+
+        const draftRes = await fetch(`/content/carousel/${state.jobId}/draft`, { method: 'POST' });
+        const draftData = await draftRes.json();
+        if (!draftRes.ok) throw new Error(draftData.detail || 'Не удалось сгенерировать draft');
+
+        state.approvalPayload = draftData.approval_payload;
+        renderApprovalSlides(state.approvalPayload);
+        state.approved = false;
+        els.approveBtn.disabled = false;
+        els.renderBtn.disabled = true;
+        setStatus(els.inputStatus, `Draft готов для job ${state.jobId}`);
+        setStatus(els.approvalStatus, 'Проверьте тексты, затем нажмите Approve Edited Text.');
+      } catch (error) {
+        setStatus(els.inputStatus, error.message || String(error), true);
+      } finally {
+        els.generateBtn.disabled = false;
+      }
+    }
+
+    async function approveSlides() {
+      if (!state.jobId) return;
+      els.approveBtn.disabled = true;
+      setStatus(els.approvalStatus, 'Сохраняю финальную текстовую версию...');
+      try {
+        const slides = collectApprovalSlides();
+        const res = await fetch(`/content/carousel/${state.jobId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slides }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Не удалось подтвердить тексты');
+        state.approved = true;
+        els.renderBtn.disabled = false;
+        setStatus(els.approvalStatus, `Approved ${data.typed_slides.length} slides. Можно рендерить.`);
+      } catch (error) {
+        setStatus(els.approvalStatus, error.message || String(error), true);
+      } finally {
+        els.approveBtn.disabled = false;
+      }
+    }
+
+    async function renderCarousel() {
+      if (!state.jobId) return;
+      els.renderBtn.disabled = true;
+      setStatus(els.renderStatus, 'Рендерю карусель...');
+      try {
+        const res = await fetch(`/content/carousel/${state.jobId}/render`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Не удалось отрендерить карусель');
+        renderOutputs(state.jobId, data.outputs);
+        const issues = (data.qa_report?.slides || []).reduce((acc, slide) => acc + (slide.issues?.length || 0), 0);
+        setStatus(els.renderStatus, `Render complete. QA issues: ${issues}`);
+      } catch (error) {
+        setStatus(els.renderStatus, error.message || String(error), true);
+      } finally {
+        els.renderBtn.disabled = false;
+      }
+    }
+
+    els.generateBtn.addEventListener('click', createJobAndDraft);
+    els.approveBtn.addEventListener('click', approveSlides);
+    els.renderBtn.addEventListener('click', renderCarousel);
+    els.refreshBtn.addEventListener('click', async () => {
+      try {
+        await refreshJob();
+        setStatus(els.inputStatus, 'Job refreshed.');
+      } catch (error) {
+        setStatus(els.inputStatus, error.message || String(error), true);
+      }
+    });
+
+    setJobBadge();
+  </script>
+</body>
+</html>

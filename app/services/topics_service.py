@@ -39,7 +39,7 @@ def generate_topics(n: int, hint: str | None = None) -> list[TopicIdea]:
         user_prompt = f"Тема/контекст: {hint}\nСгенерируй {n} тем."
 
     resp = _get_client().chat.completions.create(
-        model="gpt-5-mini",
+        model="gpt-4.1",
         messages=[
             {"role": "system", "content": TOPICS_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -80,7 +80,7 @@ def generate_long_descriptions(topics: list[TopicIdea]) -> dict[str, str]:
         return {}
     items = [{"title": t.title, "description": t.description} for t in topics]
     resp = _get_client().chat.completions.create(
-        model="gpt-5-mini",
+        model="gpt-4.1",
         messages=[
             {"role": "system", "content": LONG_DESC_SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps({"items": items}, ensure_ascii=False)},

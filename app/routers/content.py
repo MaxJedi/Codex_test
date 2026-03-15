@@ -1,4 +1,6 @@
 import json
+import logging
+import mimetypes
 import os
 import subprocess
 import uuid
@@ -16,13 +18,21 @@ from app.schemas import (
     TopicsOverlayItem,
     TopicIdea,
     TopicsOverlayParams,
+    ApprovalSubmitRequest,
+    CarouselCreateRequest,
+    ReferenceAssets,
+    StoredAsset,
+    StyleVars,
 )
+from app.services.carousel_job_service import CarouselJobService
 from app.services.text_overlay_service import TextOverlayService
-from app.services.storage_service import ensure_dir
+from app.services.storage_service import create_carousel_job_dir, ensure_dir, load_job_status, save_upload
 from app.services.topics_service import generate_topics, generate_long_descriptions
 
 
 router = APIRouter(prefix="/content", tags=["content"])
+carousel_job_service = CarouselJobService()
+logger = logging.getLogger(__name__)
 
 
 def _safe_realpath(path: str) -> str:
@@ -31,6 +41,39 @@ def _safe_realpath(path: str) -> str:
     if not real.startswith(root.rstrip(os.sep) + os.sep) and real != root:
         raise HTTPException(403, f"path is outside FILE_BROWSER_ROOT: {settings.FILE_BROWSER_ROOT}")
     return real
+
+
+def _carousel_download_url(job_id: str, relative_path: str) -> str:
+    return f"/content/carousel/{job_id}/download/{relative_path}"
+
+
+def _safe_job_file(job_id: str, relative_path: str) -> tuple[object, str]:
+    state = load_job_status(job_id)
+    if state is None:
+        raise HTTPException(404, "Carousel job not found")
+    root = os.path.realpath(state.paths.root)
+    full = os.path.realpath(os.path.join(root, relative_path))
+    if not full.startswith(root.rstrip(os.sep) + os.sep):
+        raise HTTPException(403, "Invalid file path")
+    if not os.path.isfile(full):
+        raise HTTPException(404, "File not found")
+    return state, full
+
+
+def _serialize_carousel_outputs(job_id: str, outputs: dict | None) -> dict | None:
+    if outputs is None:
+        return None
+    slide_paths = outputs.get("slide_paths") or []
+    return {
+        **outputs,
+        "slide_items": [
+            {"path": path, "url": _carousel_download_url(job_id, path)}
+            for path in slide_paths
+        ],
+        "preview_strip_url": _carousel_download_url(job_id, outputs["preview_strip_path"]) if outputs.get("preview_strip_path") else None,
+        "job_spec_url": _carousel_download_url(job_id, outputs["job_spec_path"]) if outputs.get("job_spec_path") else None,
+        "zip_url": _carousel_download_url(job_id, outputs["zip_path"]) if outputs.get("zip_path") else None,
+    }
 
 
 @router.get("/fs_ls")
@@ -292,4 +335,140 @@ async def topics_overlay_batch_upload(
         ))
 
     return TopicsOverlayResponse(source_path=input_path, results=results)
+
+
+@router.post("/carousel/jobs")
+async def carousel_create_job(
+    topic: str = Form(""),
+    lang: str = Form("auto"),
+    slide_count: int = Form(7),
+    user_text: str = Form(""),
+    style_vars_json: str = Form("{}"),
+    ref_style_images: UploadFile | list[UploadFile] | None = File(None),
+    subject_image: UploadFile | None = File(None),
+    brand_assets: UploadFile | list[UploadFile] | None = File(None),
+):
+    logger.info("carousel.create_job: request received topic=%r lang=%s slide_count=%s", topic, lang, slide_count)
+    try:
+        style_vars_data = json.loads(style_vars_json or "{}")
+    except json.JSONDecodeError:
+        logger.warning("carousel.create_job: invalid style_vars_json")
+        raise HTTPException(400, "Invalid JSON in style_vars_json")
+
+    payload = CarouselCreateRequest.model_validate(
+        {
+            "topic": topic,
+            "lang": lang,
+            "slide_count": slide_count,
+            "user_text": user_text or None,
+            "style_vars": StyleVars.model_validate(style_vars_data),
+        }
+    )
+
+    job_id = f"carousel_{uuid.uuid4().hex[:12]}"
+    paths = create_carousel_job_dir(job_id)
+
+    ref_uploads = ref_style_images if isinstance(ref_style_images, list) else ([ref_style_images] if ref_style_images else [])
+    brand_uploads = brand_assets if isinstance(brand_assets, list) else ([brand_assets] if brand_assets else [])
+
+    ref_assets_saved: list[StoredAsset] = []
+    for idx, upload in enumerate(ref_uploads[:5], start=1):
+        ext = os.path.splitext(upload.filename or "")[1] or ".png"
+        target = os.path.join(paths.inputs_dir, f"ref_style_{idx:02d}{ext}")
+        ref_assets_saved.append(await save_upload(target, upload))
+
+    subject_saved = None
+    if subject_image and subject_image.filename:
+        ext = os.path.splitext(subject_image.filename or "")[1] or ".png"
+        target = os.path.join(paths.inputs_dir, f"subject{ext}")
+        subject_saved = await save_upload(target, subject_image)
+
+    brand_saved: list[StoredAsset] = []
+    for idx, upload in enumerate(brand_uploads, start=1):
+        ext = os.path.splitext(upload.filename or "")[1] or ".bin"
+        target = os.path.join(paths.inputs_dir, f"brand_{idx:02d}{ext}")
+        brand_saved.append(await save_upload(target, upload))
+
+    assets = ReferenceAssets(
+        ref_style_images=ref_assets_saved,
+        subject_image=subject_saved,
+        brand_assets=brand_saved,
+    )
+    response = carousel_job_service.create_job(payload, assets, job_id=job_id)
+    logger.info(
+        "carousel.create_job: created job_id=%s refs=%s subject=%s brand_assets=%s",
+        job_id,
+        len(ref_assets_saved),
+        bool(subject_saved),
+        len(brand_saved),
+    )
+    return response.model_dump(mode="json")
+
+
+@router.post("/carousel/{job_id}/draft")
+def carousel_generate_draft(job_id: str):
+    logger.info("carousel.generate_draft: start job_id=%s", job_id)
+    try:
+        response = carousel_job_service.generate_draft(job_id)
+    except FileNotFoundError as exc:
+        logger.warning("carousel.generate_draft: job not found job_id=%s", job_id)
+        raise HTTPException(404, str(exc)) from exc
+    except Exception:
+        logger.exception("carousel.generate_draft: failed job_id=%s", job_id)
+        raise
+    logger.info("carousel.generate_draft: done job_id=%s", job_id)
+    return response.model_dump(mode="json")
+
+
+@router.post("/carousel/{job_id}/approve")
+def carousel_approve(job_id: str, payload: ApprovalSubmitRequest):
+    logger.info("carousel.approve: start job_id=%s slides=%s", job_id, len(payload.slides))
+    try:
+        response = carousel_job_service.approve(job_id, payload)
+    except FileNotFoundError as exc:
+        logger.warning("carousel.approve: job not found job_id=%s", job_id)
+        raise HTTPException(404, str(exc)) from exc
+    except Exception:
+        logger.exception("carousel.approve: failed job_id=%s", job_id)
+        raise
+    logger.info("carousel.approve: done job_id=%s", job_id)
+    return response.model_dump(mode="json")
+
+
+@router.post("/carousel/{job_id}/render")
+def carousel_render(job_id: str):
+    logger.info("carousel.render: start job_id=%s", job_id)
+    try:
+        response = carousel_job_service.render(job_id)
+    except FileNotFoundError as exc:
+        logger.warning("carousel.render: job not found job_id=%s", job_id)
+        raise HTTPException(404, str(exc)) from exc
+    except Exception:
+        logger.exception("carousel.render: failed job_id=%s", job_id)
+        raise
+    payload = response.model_dump(mode="json")
+    payload["outputs"] = _serialize_carousel_outputs(job_id, payload.get("outputs"))
+    logger.info("carousel.render: done job_id=%s slides=%s", job_id, len(payload.get("outputs", {}).get("slide_paths", [])))
+    return payload
+
+
+@router.get("/carousel/{job_id}")
+def carousel_get_job(job_id: str):
+    logger.info("carousel.get_job: job_id=%s", job_id)
+    try:
+        detail = carousel_job_service.get_job_detail(job_id)
+    except FileNotFoundError as exc:
+        logger.warning("carousel.get_job: job not found job_id=%s", job_id)
+        raise HTTPException(404, str(exc)) from exc
+    payload = detail.model_dump(mode="json")
+    payload["outputs"] = _serialize_carousel_outputs(job_id, payload.get("outputs"))
+    return payload
+
+
+@router.get("/carousel/{job_id}/download/{file_path:path}")
+def carousel_download(job_id: str, file_path: str):
+    logger.info("carousel.download: job_id=%s file=%s", job_id, file_path)
+    _, full = _safe_job_file(job_id, file_path)
+    media_type, _ = mimetypes.guess_type(full)
+    return FileResponse(full, media_type=media_type or "application/octet-stream", filename=os.path.basename(full))
 

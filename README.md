@@ -144,6 +144,20 @@ app/
 uvicorn app.main:app --reload
 ```
 
+## Instagram Carousel Builder
+
+В проект добавлен отдельный web-flow для генерации Instagram-каруселей `1080x1350`:
+
+- страница: `GET /ui/carousel`
+- backend flow: создание job -> генерация draft -> обязательный approve/edit -> render -> QA -> export
+- отдельная image-generation модель для background и per-slide illustrations
+- neural cutout `subject_image` через alpha-mask (`rembg`)
+- результат: `slides/*`, `job_spec.json`, `preview_strip.png`, zip-пакет
+
+Подробная документация:
+
+- `docs/carousel.md`
+
 ### Новые эндпоинты (рекомендуется):
 - `POST /youtube/search` – поиск трендов YouTube
 - `POST /media/analyze` – анализ видео (транскрипт + шоты)
