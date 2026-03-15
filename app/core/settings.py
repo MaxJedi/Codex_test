@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default='INFO', env='LOG_LEVEL')
     LOG_FILE: str = Field(default='data/logs/app.log', env='LOG_FILE')
     CAROUSELS_DIRNAME: str = Field(default='carousels', env='CAROUSELS_DIRNAME')
+    CAROUSEL_JOB_TTL_SECONDS: int = Field(default=7200, env='CAROUSEL_JOB_TTL_SECONDS')
     FILE_BROWSER_ROOT: str = Field(default='/', env='FILE_BROWSER_ROOT')
     FRAMES_DIR: str = Field(default='frames', env='FRAMES_DIR')
     VIDEO_SHOTS_DIRNAME: str = Field(default='video_shots', env='VIDEO_SHOTS_DIRNAME')

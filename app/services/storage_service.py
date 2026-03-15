@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from typing import Any
 from datetime import datetime, UTC
 
@@ -126,6 +127,51 @@ def load_job_status(job_id: str) -> CarouselJobState | None:
     if raw is None:
         return None
     return CarouselJobState.model_validate(raw)
+
+
+def delete_carousel_job(job_id: str) -> bool:
+    job_root = os.path.join(get_carousels_root(), job_id)
+    if not os.path.isdir(job_root):
+        return False
+    shutil.rmtree(job_root, ignore_errors=True)
+    return True
+
+
+def list_carousel_job_ids() -> list[str]:
+    root = get_carousels_root()
+    if not os.path.isdir(root):
+        return []
+    return [
+        name
+        for name in os.listdir(root)
+        if name.startswith("carousel_") and os.path.isdir(os.path.join(root, name))
+    ]
+
+
+def cleanup_expired_carousel_jobs(ttl_seconds: int) -> list[str]:
+    if ttl_seconds <= 0:
+        return []
+    now = datetime.now(UTC)
+    deleted: list[str] = []
+    for job_id in list_carousel_job_ids():
+        state = load_job_status(job_id)
+        if state is None:
+            if delete_carousel_job(job_id):
+                deleted.append(job_id)
+            continue
+        updated_raw = state.updated_at
+        try:
+            updated_at = datetime.fromisoformat(updated_raw)
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=UTC)
+        except Exception:
+            if delete_carousel_job(job_id):
+                deleted.append(job_id)
+            continue
+        age_seconds = (now - updated_at.astimezone(UTC)).total_seconds()
+        if age_seconds > ttl_seconds and delete_carousel_job(job_id):
+            deleted.append(job_id)
+    return deleted
 
 
 def save_job_model(paths: CarouselJobPaths, name: str, model: Any, *, bucket: str = "intermediate") -> str:

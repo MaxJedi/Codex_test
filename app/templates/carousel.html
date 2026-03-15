@@ -424,6 +424,7 @@
       jobId: null,
       approvalPayload: null,
       approved: false,
+      sessionId: null,
     };
 
     const els = {
@@ -449,6 +450,17 @@
 
     function setJobBadge() {
       els.jobBadge.textContent = state.jobId ? `Job ${state.jobId}` : 'Job not created';
+    }
+
+    function ensureSessionId() {
+      const key = 'carousel_session_id';
+      const existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      const generated = (window.crypto && typeof window.crypto.randomUUID === 'function')
+        ? window.crypto.randomUUID()
+        : `sess_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      sessionStorage.setItem(key, generated);
+      return generated;
     }
 
     function collectStyleVars() {
@@ -596,6 +608,7 @@
         formData.append('slide_count', document.getElementById('slideCount').value);
         formData.append('user_text', document.getElementById('userText').value);
         formData.append('style_vars_json', JSON.stringify(collectStyleVars()));
+        formData.append('session_id', state.sessionId);
         appendFiles(formData, 'ref_style_images', document.getElementById('refStyleImages'));
         appendFiles(formData, 'brand_assets', document.getElementById('brandAssets'));
         const subject = document.getElementById('subjectImage');
@@ -685,6 +698,16 @@
       }
     });
 
+    window.addEventListener('beforeunload', () => {
+      if (!state.sessionId) return;
+      const payload = JSON.stringify({ session_id: state.sessionId });
+      navigator.sendBeacon(
+        '/content/carousel/session/end',
+        new Blob([payload], { type: 'application/json' }),
+      );
+    });
+
+    state.sessionId = ensureSessionId();
     setJobBadge();
   </script>
 </body>

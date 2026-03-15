@@ -3,6 +3,7 @@ import logging
 import mimetypes
 import os
 import subprocess
+import threading
 import uuid
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -26,13 +27,44 @@ from app.schemas import (
 )
 from app.services.carousel_job_service import CarouselJobService
 from app.services.text_overlay_service import TextOverlayService
-from app.services.storage_service import create_carousel_job_dir, ensure_dir, load_job_status, save_upload
+from app.services.storage_service import (
+    cleanup_expired_carousel_jobs,
+    create_carousel_job_dir,
+    delete_carousel_job,
+    ensure_dir,
+    load_job_status,
+    save_upload,
+)
 from app.services.topics_service import generate_topics, generate_long_descriptions
 
 
 router = APIRouter(prefix="/content", tags=["content"])
 carousel_job_service = CarouselJobService()
 logger = logging.getLogger(__name__)
+_session_jobs_lock = threading.Lock()
+_session_jobs: dict[str, set[str]] = {}
+
+
+def _prune_deleted_jobs_from_sessions() -> None:
+    with _session_jobs_lock:
+        empty_sessions = [session_id for session_id, job_ids in _session_jobs.items() if not job_ids]
+        for session_id in empty_sessions:
+            _session_jobs.pop(session_id, None)
+
+
+def _cleanup_session_jobs(session_id: str) -> list[str]:
+    with _session_jobs_lock:
+        job_ids = set(_session_jobs.pop(session_id, set()))
+    deleted: list[str] = []
+    for job_id in job_ids:
+        if delete_carousel_job(job_id):
+            deleted.append(job_id)
+    return deleted
+
+
+def _register_session_job(session_id: str, job_id: str) -> None:
+    with _session_jobs_lock:
+        _session_jobs.setdefault(session_id, set()).add(job_id)
 
 
 def _safe_realpath(path: str) -> str:
@@ -344,11 +376,25 @@ async def carousel_create_job(
     slide_count: int = Form(7),
     user_text: str = Form(""),
     style_vars_json: str = Form("{}"),
+    session_id: str = Form(""),
     ref_style_images: UploadFile | list[UploadFile] | None = File(None),
     subject_image: UploadFile | None = File(None),
     brand_assets: UploadFile | list[UploadFile] | None = File(None),
 ):
     logger.info("carousel.create_job: request received topic=%r lang=%s slide_count=%s", topic, lang, slide_count)
+    ttl_deleted = cleanup_expired_carousel_jobs(settings.CAROUSEL_JOB_TTL_SECONDS)
+    if ttl_deleted:
+        logger.info("carousel.create_job: ttl cleanup removed=%s", len(ttl_deleted))
+    _prune_deleted_jobs_from_sessions()
+    normalized_session_id = session_id.strip()
+    if normalized_session_id:
+        deleted_session_jobs = _cleanup_session_jobs(normalized_session_id)
+        if deleted_session_jobs:
+            logger.info(
+                "carousel.create_job: session cleanup session_id=%s removed=%s",
+                normalized_session_id,
+                len(deleted_session_jobs),
+            )
     try:
         style_vars_data = json.loads(style_vars_json or "{}")
     except json.JSONDecodeError:
@@ -395,6 +441,8 @@ async def carousel_create_job(
         brand_assets=brand_saved,
     )
     response = carousel_job_service.create_job(payload, assets, job_id=job_id)
+    if normalized_session_id:
+        _register_session_job(normalized_session_id, job_id)
     logger.info(
         "carousel.create_job: created job_id=%s refs=%s subject=%s brand_assets=%s",
         job_id,
@@ -403,6 +451,20 @@ async def carousel_create_job(
         len(brand_saved),
     )
     return response.model_dump(mode="json")
+
+
+@router.post("/carousel/session/end")
+def carousel_session_end(payload: dict):
+    session_id = str(payload.get("session_id", "")).strip()
+    if not session_id:
+        raise HTTPException(400, "session_id required")
+    deleted_job_ids = _cleanup_session_jobs(session_id)
+    logger.info(
+        "carousel.session_end: session_id=%s removed=%s",
+        session_id,
+        len(deleted_job_ids),
+    )
+    return {"ok": True, "deleted_job_ids": deleted_job_ids}
 
 
 @router.post("/carousel/{job_id}/draft")
