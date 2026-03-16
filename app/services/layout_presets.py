@@ -66,12 +66,20 @@ def choose_layout_template(
     has_subject_image: bool = False,
 ) -> LayoutTemplate:
     by_name = {template.name: template for template in templates}
+    uses_hero_preset = style_vars.layout_preset in {"hero_left", "hero_right"}
+
     if slide.slide_type == "cover":
         if style_vars.hero_enabled and has_subject_image:
             return by_name.get("hero_right", templates[0])
         return by_name.get("text_only", templates[0])
     if slide.slide_type == "cta":
         return by_name.get("text_only", templates[0])
+
+    # Without a subject image we avoid hero-side layouts entirely so the right
+    # column is not reserved/used for illustration placement.
+    if not has_subject_image and uses_hero_preset:
+        return by_name.get("text_only", templates[0])
+
     if style_vars.hero_enabled and has_subject_image:
         return by_name.get("hero_left" if style_vars.hero_side == "left" else "hero_right", templates[0])
     return by_name.get(style_vars.layout_preset, templates[0])
