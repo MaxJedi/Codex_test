@@ -28,6 +28,7 @@ from app.schemas import (
 from app.services.carousel_job_service import CarouselJobService
 from app.services.text_overlay_service import TextOverlayService
 from app.services.storage_service import (
+    can_delete_carousel_job,
     cleanup_expired_carousel_jobs,
     create_carousel_job_dir,
     delete_carousel_job,
@@ -57,6 +58,10 @@ def _cleanup_session_jobs(session_id: str) -> list[str]:
         job_ids = set(_session_jobs.pop(session_id, set()))
     deleted: list[str] = []
     for job_id in job_ids:
+        if not can_delete_carousel_job(job_id):
+            with _session_jobs_lock:
+                _session_jobs.setdefault(session_id, set()).add(job_id)
+            continue
         if delete_carousel_job(job_id):
             deleted.append(job_id)
     return deleted

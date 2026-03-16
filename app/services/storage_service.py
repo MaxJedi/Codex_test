@@ -137,6 +137,13 @@ def delete_carousel_job(job_id: str) -> bool:
     return True
 
 
+def can_delete_carousel_job(job_id: str) -> bool:
+    state = load_job_status(job_id)
+    if state is None:
+        return True
+    return state.status != "rendering"
+
+
 def list_carousel_job_ids() -> list[str]:
     root = get_carousels_root()
     if not os.path.isdir(root):
@@ -154,6 +161,8 @@ def cleanup_expired_carousel_jobs(ttl_seconds: int) -> list[str]:
     now = datetime.now(UTC)
     deleted: list[str] = []
     for job_id in list_carousel_job_ids():
+        if not can_delete_carousel_job(job_id):
+            continue
         state = load_job_status(job_id)
         if state is None:
             if delete_carousel_job(job_id):
