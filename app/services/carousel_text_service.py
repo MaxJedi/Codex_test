@@ -91,10 +91,38 @@ def _split_user_text(user_text: str, slide_count: int) -> list[str]:
     return (built or chunks)[:slide_count]
 
 
+def _is_bullet_line(value: str) -> bool:
+    return bool(re.match(r"^[-—•*]\s*", value.strip()))
+
+
+def _strip_bullet_marker(value: str) -> str:
+    return re.sub(r"^[-—•*]\s*", "", value.strip()).strip()
+
+
+def _split_title_body_list(user_text: str) -> tuple[str, list[str], str, list[str]] | None:
+    lines = [line.strip() for line in (user_text or "").splitlines() if line.strip()]
+    if len(lines) < 4:
+        return None
+
+    first_bullet_idx = next((idx for idx, line in enumerate(lines) if _is_bullet_line(line)), None)
+    if first_bullet_idx is None or first_bullet_idx < 2:
+        return None
+
+    title = lines[0]
+    list_title = lines[first_bullet_idx - 1].rstrip(":").strip()
+    body = lines[1:first_bullet_idx - 1]
+    bullets = [_strip_bullet_marker(line) for line in lines[first_bullet_idx:] if _strip_bullet_marker(line)]
+    if not title or not list_title or not body or len(bullets) < 2:
+        return None
+    return title, body, list_title, bullets
+
+
 def _auto_slide_count_from_user_text(user_text: str) -> int:
     text = (user_text or "").strip()
     if not text:
         return 1
+    if _split_title_body_list(text) is not None:
+        return 2
 
     paragraph_chunks = [chunk.strip() for chunk in re.split(r"\n{2,}", text) if chunk.strip()]
     if paragraph_chunks:
@@ -138,7 +166,7 @@ def _coerce_text_role(value: object, *, fallback: str) -> str:
     normalized = value.strip().lower()
     if normalized in {"header", "heading"}:
         return "title"
-    allowed = {"title", "bullet", "caption", "cta", "subtitle"}
+    allowed = {"title", "body", "bullet", "caption", "cta", "subtitle"}
     return normalized if normalized in allowed else fallback
 
 
@@ -153,7 +181,20 @@ def _normalize_llm_typed_item(item: object, *, index: int, slide_count: int) -> 
     title_block = title_block_raw if isinstance(title_block_raw, dict) else {}
     bullet_blocks_raw = item.get("bullet_blocks")
     bullet_blocks_list = bullet_blocks_raw if isinstance(bullet_blocks_raw, list) else []
+    body_blocks_raw = item.get("body_blocks")
+    body_blocks_list = body_blocks_raw if isinstance(body_blocks_raw, list) else []
 
+    normalized_body_blocks: list[dict] = []
+    for block in body_blocks_list:
+        if not isinstance(block, dict):
+            continue
+        normalized_body_blocks.append(
+            {
+                "text": str(block.get("text", "")).strip(),
+                "max_lines": int(block.get("max_lines", 4) or 4),
+                "role": _coerce_text_role(block.get("role"), fallback="body"),
+            }
+        )
     normalized_bullet_blocks: list[dict] = []
     for block in bullet_blocks_list:
         if not isinstance(block, dict):
@@ -174,6 +215,7 @@ def _normalize_llm_typed_item(item: object, *, index: int, slide_count: int) -> 
             "max_lines": int(title_block.get("max_lines", 3 if index == 1 else 2) or (3 if index == 1 else 2)),
             "role": _coerce_text_role(title_block.get("role"), fallback="title"),
         },
+        "body_blocks": normalized_body_blocks[:6],
         "bullet_blocks": normalized_bullet_blocks[:6],
         "emphasis_spans": [str(item_text) for item_text in (item.get("emphasis_spans") or [])][:12],
         "cta": str(item.get("cta")).strip() if item.get("cta") is not None else None,
@@ -190,6 +232,8 @@ def _normalize_llm_draft_item(item: object, *, index: int, slide_count: int) -> 
     slide_type = raw_type if raw_type in allowed else ("cover" if index == 1 else ("cta" if index == slide_count else "content"))
     bullets_raw = item.get("bullets") if isinstance(item.get("bullets"), list) else []
     bullets = [str(value).strip() for value in bullets_raw if str(value).strip()][:6]
+    body_raw = item.get("body") if isinstance(item.get("body"), list) else []
+    body = [str(value).strip() for value in body_raw if str(value).strip()][:6]
     emphasis_raw = item.get("emphasis_words") if isinstance(item.get("emphasis_words"), list) else []
     emphasis_words = [str(value).strip() for value in emphasis_raw if str(value).strip()][:12]
     cta_raw = item.get("cta")
@@ -197,6 +241,7 @@ def _normalize_llm_draft_item(item: object, *, index: int, slide_count: int) -> 
     return {
         "slide_type": slide_type,
         "title": str(item.get("title", "")).strip(),
+        "body": body,
         "bullets": bullets,
         "emphasis_words": emphasis_words,
         "cta": cta,
@@ -210,7 +255,7 @@ def _has_low_diversity_draft(slides: list[DraftSlide]) -> bool:
     bullet_signatures = [
         _normalize_text_signature(block)
         for slide in slides
-        for block in slide.bullets
+        for block in (slide.body + slide.bullets)
         if block.strip()
     ]
     unique_bullets = {item for item in bullet_signatures if item}
@@ -221,6 +266,33 @@ def _has_low_diversity_draft(slides: list[DraftSlide]) -> bool:
     return False
 
 
+def _draft_slide_content_size(slide: DraftSlide) -> int:
+    return sum(
+        len(item.split())
+        for item in [slide.title, *slide.body, *slide.bullets, slide.cta or ""]
+        if item and item.strip()
+    )
+
+
+def _is_user_text_draft_balanced(slides: list[DraftSlide]) -> bool:
+    if not slides:
+        return False
+    content_sizes = [_draft_slide_content_size(slide) for slide in slides]
+    if any(not (slide.body or slide.bullets or slide.cta) for slide in slides):
+        return False
+    if any(slide.body and slide.bullets for slide in slides):
+        return False
+
+    non_cta_sizes = [
+        size
+        for slide, size in zip(slides, content_sizes, strict=False)
+        if slide.slide_type != "cta" and size > 0
+    ]
+    if len(non_cta_sizes) >= 2 and min(non_cta_sizes) > 0 and max(non_cta_sizes) / min(non_cta_sizes) > 2.5:
+        return False
+    return True
+
+
 def _has_low_diversity_typed(slides: list[TypedSlide]) -> bool:
     if len(slides) < 3:
         return False
@@ -228,7 +300,7 @@ def _has_low_diversity_typed(slides: list[TypedSlide]) -> bool:
     bullet_signatures = [
         _normalize_text_signature(block.text)
         for slide in slides
-        for block in slide.bullet_blocks
+        for block in (slide.body_blocks + slide.bullet_blocks)
         if block.text.strip()
     ]
     unique_bullets = {item for item in bullet_signatures if item}
@@ -332,6 +404,7 @@ def _build_structured_draft_slides(topic: str, lang: str, slide_count: int) -> l
             DraftSlide(
                 slide_type=slide_type,
                 title=title,
+                body=[],
                 bullets=bullets,
                 emphasis_words=emphasis_words,
                 cta=cta,
@@ -345,18 +418,42 @@ def _fallback_draft_slides(topic: str, lang: str, slide_count: int) -> list[Draf
 
 
 def _draft_from_user_text(user_text: str, lang: str, slide_count: int, *, slide_roles: list[str] | None = None) -> list[DraftSlide]:
+    title_body_list = _split_title_body_list(user_text)
+    if slide_count == 2 and title_body_list is not None:
+        title, body, list_title, bullets = title_body_list
+        return [
+            DraftSlide(
+                slide_type=slide_roles[0] if slide_roles else "cover",
+                title=title,
+                body=body[:6],
+                bullets=[],
+                emphasis_words=[],
+                cta=None,
+            ),
+            DraftSlide(
+                slide_type=slide_roles[1] if slide_roles and len(slide_roles) > 1 else "content",
+                title=list_title,
+                body=[],
+                bullets=bullets[:6],
+                emphasis_words=[],
+                cta=None,
+            ),
+        ]
+
     chunks = _split_user_text(user_text, slide_count)
     slides: list[DraftSlide] = []
     for idx in range(slide_count):
         chunk = chunks[idx] if idx < len(chunks) else chunks[-1]
-        lines = [line.strip(" -•\t") for line in chunk.splitlines() if line.strip()]
+        lines = [line.strip(" \t") for line in chunk.splitlines() if line.strip()]
         if len(lines) >= 2:
             title = lines[0]
-            bullets = lines[1:7]
+            body = [line for line in lines[1:] if not _is_bullet_line(line)]
+            bullets = [_strip_bullet_marker(line) for line in lines[1:] if _is_bullet_line(line)]
         else:
             sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", chunk.strip()) if part.strip()]
             title = sentences[0] if sentences else chunk.strip()
-            bullets = sentences[1:7]
+            body = sentences[1:2]
+            bullets = sentences[2:8]
         slides.append(
             DraftSlide(
                 slide_type=(
@@ -365,6 +462,7 @@ def _draft_from_user_text(user_text: str, lang: str, slide_count: int, *, slide_
                     else ("cover" if idx == 0 else ("cta" if idx == slide_count - 1 else "content"))
                 ),
                 title=title,
+                body=body[:6],
                 bullets=bullets[:6],
                 emphasis_words=[],
                 cta=None,
@@ -385,6 +483,10 @@ def _fallback_compaction(source_slides: list[DraftSlide]) -> list[TypedSlide]:
                     max_lines=3 if slide.slide_type == "cover" else 2,
                     role="title",
                 ),
+                body_blocks=[
+                    TextBlock(text=_clean_line(item, max_chars=180), max_lines=4, role="body")
+                    for item in slide.body[:6]
+                ],
                 bullet_blocks=[
                     TextBlock(text=_clean_line(item, max_chars=90), max_lines=3, role="bullet")
                     for item in slide.bullets[:6]
@@ -414,19 +516,29 @@ def _deterministic_self_check(typed_slides: list[TypedSlide]) -> TypedSlidesRevi
         bullet_blocks = slide.bullet_blocks[:6]
         if len(bullet_blocks) != len(slide.bullet_blocks):
             issues_fixed.append(f"{slide.id}: обрезаны лишние буллеты")
+        body_blocks = slide.body_blocks[:6]
+        if len(body_blocks) != len(slide.body_blocks):
+            issues_fixed.append(f"{slide.id}: обрезаны лишние абзацы")
+        normalized_body = []
+        for block in body_blocks:
+            normalized = _clean_line(block.text, max_chars=180)
+            if normalized != block.text:
+                issues_fixed.append(f"{slide.id}: укорочен абзац")
+            normalized_body.append(block.model_copy(update={"text": normalized, "role": "body"}))
         normalized_bullets = []
         for block in bullet_blocks:
             normalized = _clean_line(block.text, max_chars=90)
             if normalized != block.text:
                 issues_fixed.append(f"{slide.id}: укорочен буллет")
             normalized_bullets.append(block.model_copy(update={"text": normalized}))
-        if slide.slide_type != "cta" and not normalized_bullets:
+        if slide.slide_type != "cta" and not normalized_body and not normalized_bullets:
             remaining_risks.append(f"{slide.id}: мало текста для контентного слайда")
 
         fixed.append(
             slide.model_copy(
                 update={
                     "title_block": slide.title_block.model_copy(update={"text": title}),
+                    "body_blocks": normalized_body,
                     "bullet_blocks": normalized_bullets,
                     "emphasis_spans": slide.emphasis_spans[:12],
                     "cta": _clean_line(slide.cta, max_chars=90) if slide.cta else None,
@@ -508,13 +620,14 @@ class CarouselTextService:
                 for index, item in enumerate(items, start=1)
             ]
             slides = [DraftSlide.model_validate(item) for item in normalized_items]
-            if len(slides) == slide_count:
+            if len(slides) == slide_count and _is_user_text_draft_balanced(slides):
                 logger.info("carousel.text.user_text_draft: llm result accepted count=%s", len(slides))
                 return slides
             logger.warning(
-                "carousel.text.user_text_draft: llm result rejected count=%s expected=%s",
+                "carousel.text.user_text_draft: llm result rejected count=%s expected=%s balanced=%s",
                 len(slides),
                 slide_count,
+                _is_user_text_draft_balanced(slides),
             )
         except Exception:
             logger.exception("carousel.text.user_text_draft: llm structuring failed, fallback to scripted split")
@@ -525,6 +638,9 @@ class CarouselTextService:
         typed: list[TypedSlide] = []
         for idx, slide in enumerate(source_slides, start=1):
             title_text = slide.title if preserve_text else _clean_line(slide.title, max_chars=70)
+            body_items = slide.body[:6]
+            if not preserve_text:
+                body_items = [_clean_line(item, max_chars=180) for item in body_items]
             bullet_items = slide.bullets[:6]
             if not preserve_text:
                 bullet_items = [_clean_line(item, max_chars=90) for item in bullet_items]
@@ -536,6 +652,7 @@ class CarouselTextService:
                     id=f"slide_{idx:02d}",
                     slide_type=slide.slide_type,
                     title_block=TextBlock(text=title_text, max_lines=3 if slide.slide_type == "cover" else 2, role="title"),
+                    body_blocks=[TextBlock(text=item, max_lines=4, role="body") for item in body_items],
                     bullet_blocks=[TextBlock(text=item, max_lines=3, role="bullet") for item in bullet_items],
                     emphasis_spans=([] if preserve_text else slide.emphasis_words[:12]),
                     cta=cta_value,
@@ -557,15 +674,18 @@ class CarouselTextService:
             lines = [line.strip(" \t") for line in chunk.splitlines() if line.strip()]
             if len(lines) >= 2:
                 title = lines[0]
-                bullets = lines[1:7]
+                body = [line for line in lines[1:] if not re.match(r"^[-—•*]\s*", line)]
+                bullets = [re.sub(r"^[-—•*]\s*", "", line).strip() for line in lines[1:] if re.match(r"^[-—•*]\s*", line)]
             else:
                 sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", chunk.strip()) if part.strip()]
                 title = sentences[0] if sentences else chunk.strip()
-                bullets = sentences[1:7]
+                body = sentences[1:2]
+                bullets = sentences[2:8]
             slides.append(
                 ApprovalSlide(
                     id=f"slide_{idx + 1:02d}",
                     title=title,
+                    body=body[:6],
                     bullets=bullets[:6],
                     emphasis_words=[],
                     cta=None,
@@ -701,6 +821,7 @@ class CarouselTextService:
                 ApprovalSlide(
                     id=slide.id,
                     title=slide.title_block.text,
+                    body=[block.text for block in slide.body_blocks],
                     bullets=[block.text for block in slide.bullet_blocks],
                     emphasis_words=slide.emphasis_spans[:12],
                     cta=slide.cta,
@@ -719,6 +840,9 @@ class CarouselTextService:
         for idx, slide in enumerate(approval_payload.slides, start=1):
             slide_type = "cover" if idx == 1 else ("cta" if idx == total else "content")
             title_text = slide.title if preserve_text else _clean_line(slide.title, max_chars=70)
+            body_values = slide.body[:6]
+            if not preserve_text:
+                body_values = [_clean_line(item, max_chars=180) for item in body_values]
             bullet_values = slide.bullets[:6]
             if not preserve_text:
                 bullet_values = [_clean_line(item, max_chars=90) for item in bullet_values]
@@ -730,6 +854,10 @@ class CarouselTextService:
                     id=slide.id,
                     slide_type=slide_type,
                     title_block=TextBlock(text=title_text, max_lines=3 if idx == 1 else 2, role="title"),
+                    body_blocks=[
+                        TextBlock(text=item, max_lines=4, role="body")
+                        for item in body_values
+                    ],
                     bullet_blocks=[
                         TextBlock(text=item, max_lines=3, role="bullet")
                         for item in bullet_values

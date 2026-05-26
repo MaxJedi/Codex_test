@@ -257,6 +257,7 @@ class CarouselRenderService:
         min_size: int,
         spacing: int,
         stroke_width: int,
+        prefixes: list[str] | None = None,
     ) -> dict:
         for size in range(start_size, min_size - 1, -2):
             font = _pil_font(font_path, size)
@@ -264,8 +265,9 @@ class CarouselRenderService:
             total_height = 0
             max_width = 0
             fits = True
-            for block in blocks:
-                lines = _wrap_text(draw, f"• {block.text}", font, max_width=bbox.w, stroke_width=stroke_width)
+            for idx, block in enumerate(blocks):
+                prefix = prefixes[idx] if prefixes and idx < len(prefixes) else "• "
+                lines = _wrap_text(draw, f"{prefix}{block.text}", font, max_width=bbox.w, stroke_width=stroke_width)
                 if len(lines) > block.max_lines:
                     fits = False
                     break
@@ -286,8 +288,9 @@ class CarouselRenderService:
         font = _pil_font(font_path, min_size)
         wrapped_items = []
         total_height = 0
-        for block in blocks:
-            lines = _wrap_text(draw, f"• {block.text}", font, max_width=bbox.w, stroke_width=stroke_width)[: block.max_lines]
+        for idx, block in enumerate(blocks):
+            prefix = prefixes[idx] if prefixes and idx < len(prefixes) else "• "
+            lines = _wrap_text(draw, f"{prefix}{block.text}", font, max_width=bbox.w, stroke_width=stroke_width)[: block.max_lines]
             text = "\n".join(lines)
             _, height = _measure_text(draw, text, font, spacing=spacing, stroke_width=stroke_width)
             total_height += height + spacing + 16
@@ -610,24 +613,28 @@ class CarouselRenderService:
                 )
             )
 
-        bullet_fit = self._fit_bullets(
+        content_blocks = slide.body_blocks + slide.bullet_blocks
+        content_prefixes = [""] * len(slide.body_blocks) + ["• "] * len(slide.bullet_blocks)
+        content_roles = ["body"] * len(slide.body_blocks) + ["bullet"] * len(slide.bullet_blocks)
+        content_fit = self._fit_bullets(
             draw,
-            slide.bullet_blocks,
+            content_blocks,
             layout.bullet_box,
             font_path=font_plan.fallback_font,
             start_size=config.style_vars.font_body_size,
             min_size=max(18, config.style_vars.font_body_size // 2),
             spacing=int(config.style_vars.font_body_size * (config.style_vars.line_height_body - 1.0)),
             stroke_width=max(0, config.style_vars.text_stroke_width - 1),
+            prefixes=content_prefixes,
         )
         logger.info(
-            "carousel.render.slide: bullets fit slide_id=%s font_size=%s items=%s",
+            "carousel.render.slide: content fit slide_id=%s font_size=%s items=%s",
             slide.id,
-            bullet_fit["size"],
-            len(bullet_fit["items"]),
+            content_fit["size"],
+            len(content_fit["items"]),
         )
 
-        bullets_card_height = max(96, min(layout.bullet_box.h + 24, int(bullet_fit["height"]) + 28))
+        bullets_card_height = max(96, min(layout.bullet_box.h + 24, int(content_fit["height"]) + 28))
         bullets_card = BBox(
             x=max(0, layout.bullet_box.x - 12),
             y=max(0, layout.bullet_box.y - 12),
@@ -645,24 +652,33 @@ class CarouselRenderService:
         layer_map.layers.append(LayerPlacement(name="bullet_card", bbox=bullets_card))
 
         current_y = layout.bullet_box.y
-        bullet_spacing = int(bullet_fit["size"] * 0.34)
-        for idx, item in enumerate(bullet_fit["items"]):
+        bullet_spacing = int(content_fit["size"] * 0.34)
+        body_idx = 0
+        bullet_idx = 0
+        for idx, item in enumerate(content_fit["items"]):
+            role = content_roles[idx] if idx < len(content_roles) else "bullet"
+            if role == "body":
+                body_idx += 1
+                layer_name = f"body_{body_idx}"
+            else:
+                bullet_idx += 1
+                layer_name = f"bullet_{bullet_idx}"
             width, height = _measure_text(
                 draw,
                 item,
-                bullet_fit["font"],
-                spacing=int(bullet_fit["size"] * (config.style_vars.line_height_body - 1.0)),
+                content_fit["font"],
+                spacing=int(content_fit["size"] * (config.style_vars.line_height_body - 1.0)),
                 stroke_width=max(0, config.style_vars.text_stroke_width - 1),
             )
             self._draw_text_with_effects(
                 image,
                 position=(layout.bullet_box.x, current_y),
                 text=item,
-                font=bullet_fit["font"],
+                font=content_fit["font"],
                 fill=design_tokens.palette.text,
                 stroke_fill=config.style_vars.text_stroke_color,
                 stroke_width=max(0, config.style_vars.text_stroke_width - 1),
-                spacing=int(bullet_fit["size"] * (config.style_vars.line_height_body - 1.0)),
+                spacing=int(content_fit["size"] * (config.style_vars.line_height_body - 1.0)),
                 shadow_offset=max(1, config.style_vars.text_shadow_xy // 2),
                 shadow_blur=max(1, config.style_vars.text_shadow_blur // 2),
                 shadow_color=config.style_vars.text_shadow_color,
@@ -670,23 +686,24 @@ class CarouselRenderService:
             )
             layer_map.layers.append(
                 LayerPlacement(
-                    name=f"bullet_{idx + 1}",
+                    name=layer_name,
                     bbox=BBox(x=layout.bullet_box.x, y=current_y, w=width, h=height),
-                    meta={"font_size": bullet_fit["size"]},
+                    meta={"font_size": content_fit["size"]},
                 )
             )
             current_y += height + bullet_spacing
-        if bullet_fit.get("overflow_risk"):
-            for idx, block in enumerate(slide.bullet_blocks, start=1):
-                rendered = bullet_fit["items"][idx - 1] if idx - 1 < len(bullet_fit["items"]) else ""
+        if content_fit.get("overflow_risk"):
+            for idx, block in enumerate(content_blocks, start=1):
+                rendered = content_fit["items"][idx - 1] if idx - 1 < len(content_fit["items"]) else ""
+                role = content_roles[idx - 1] if idx - 1 < len(content_roles) else "bullet"
                 overflow_warnings.append(
                     OverflowWarning(
                         slide_id=slide.id,
-                        block_role="bullet",
+                        block_role=role,
                         original_text=block.text,
                         rendered_text=rendered.replace("\n", " "),
-                        fit_size=int(bullet_fit["size"]),
-                        min_allowed_size=int(bullet_fit.get("min_allowed_size", 0)),
+                        fit_size=int(content_fit["size"]),
+                        min_allowed_size=int(content_fit.get("min_allowed_size", 0)),
                         box=layout.bullet_box,
                     )
                 )

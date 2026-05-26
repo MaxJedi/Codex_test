@@ -112,6 +112,22 @@ class CarouselJobService:
                         )
                     )
             max_len = max(len(src.bullets), len(dst.bullets))
+            max_body_len = max(len(src.body), len(dst.body))
+            for idx in range(max_body_len):
+                old = src.body[idx] if idx < len(src.body) else None
+                new = dst.body[idx] if idx < len(dst.body) else None
+                exact = (old or "") != (new or "")
+                normalized = _normalize_text(old) != _normalize_text(new)
+                if exact:
+                    changes.append(
+                        SlideTextChange(
+                            field=f"body_{idx + 1}",
+                            before=old,
+                            after=new,
+                            exact_changed=exact,
+                            normalized_changed=normalized,
+                        )
+                    )
             for idx in range(max_len):
                 old = src.bullets[idx] if idx < len(src.bullets) else None
                 new = dst.bullets[idx] if idx < len(dst.bullets) else None
@@ -142,6 +158,7 @@ class CarouselJobService:
             ApprovalSlide(
                 id=item.id,
                 title=item.title_block.text,
+                body=[block.text for block in item.body_blocks],
                 bullets=[block.text for block in item.bullet_blocks],
                 emphasis_words=item.emphasis_spans[:12],
                 cta=item.cta,

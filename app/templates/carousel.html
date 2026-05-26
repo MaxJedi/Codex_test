@@ -748,6 +748,10 @@
             <textarea class="slide-title">${slide.title || ''}</textarea>
           </div>
           <div class="field">
+            <label>Основной текст без буллетов (по абзацу на строку)</label>
+            <textarea class="slide-body">${(slide.body || []).join('\n')}</textarea>
+          </div>
+          <div class="field">
             <label>Буллеты (по одному на строку)</label>
             <textarea class="slide-bullets">${(slide.bullets || []).join('\n')}</textarea>
           </div>
@@ -768,6 +772,7 @@
       return Array.from(document.querySelectorAll('.slide-editor')).map(node => ({
         id: node.dataset.slideId,
         title: node.querySelector('.slide-title').value.trim(),
+        body: node.querySelector('.slide-body').value.split('\n').map(v => v.trim()).filter(Boolean),
         bullets: node.querySelector('.slide-bullets').value.split('\n').map(v => v.trim()).filter(Boolean),
         emphasis_words: node.querySelector('.slide-emphasis').value.split(',').map(v => v.trim()).filter(Boolean),
         cta: node.querySelector('.slide-cta').value.trim() || null,

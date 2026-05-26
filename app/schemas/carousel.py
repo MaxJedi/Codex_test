@@ -13,7 +13,7 @@ HeroLayout = Literal["off", "left", "right"]
 AUTO_FONT_NAME = "AUTO"
 LayoutPresetName = Literal["hero_left", "hero_right", "text_only", "cards_grid"]
 SlideType = Literal["cover", "content", "cta", "hook", "explanation", "mistakes", "examples", "action_steps", "checklist", "summary"]
-TextRole = Literal["title", "bullet", "caption", "cta", "subtitle"]
+TextRole = Literal["title", "body", "bullet", "caption", "cta", "subtitle"]
 
 
 class CanvasSize(BaseModel):
@@ -166,6 +166,7 @@ class ReferenceAssets(BaseModel):
 class DraftSlide(BaseModel):
     slide_type: SlideType = "content"
     title: str = Field(..., max_length=1000)
+    body: list[str] = Field(default_factory=list, max_length=6)
     bullets: list[str] = Field(default_factory=list, min_length=0, max_length=6)
     emphasis_words: list[str] = Field(default_factory=list, max_length=12)
     cta: str | None = Field(default=None, max_length=1000)
@@ -181,6 +182,7 @@ class TypedSlide(BaseModel):
     id: str
     slide_type: SlideType = "content"
     title_block: TextBlock
+    body_blocks: list[TextBlock] = Field(default_factory=list, max_length=6)
     bullet_blocks: list[TextBlock] = Field(default_factory=list, max_length=6)
     emphasis_spans: list[str] = Field(default_factory=list, max_length=12)
     cta: str | None = Field(default=None, max_length=1000)
@@ -195,6 +197,7 @@ class TypedSlidesReview(BaseModel):
 class ApprovalSlide(BaseModel):
     id: str
     title: str = Field(..., max_length=1000)
+    body: list[str] = Field(default_factory=list, max_length=6)
     bullets: list[str] = Field(default_factory=list, max_length=6)
     emphasis_words: list[str] = Field(default_factory=list, max_length=12)
     cta: str | None = Field(default=None, max_length=1000)
@@ -320,7 +323,7 @@ class SlideTextDiff(BaseModel):
 
 class OverflowWarning(BaseModel):
     slide_id: str
-    block_role: Literal["title", "bullet", "cta"]
+    block_role: Literal["title", "body", "bullet", "cta"]
     original_text: str
     rendered_text: str
     fit_size: int
