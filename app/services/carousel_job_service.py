@@ -7,6 +7,7 @@ import uuid
 from pydantic import TypeAdapter
 
 from app.schemas.carousel import (
+    ApprovalSlide,
     ApprovalPayload,
     ApprovalSubmitRequest,
     CarouselApproveResponse,
@@ -18,9 +19,14 @@ from app.schemas.carousel import (
     CarouselOutput,
     CarouselRenderResponse,
     JobSpec,
+    OverflowWarning,
     QaReport,
     ReferenceAssets,
+    SlideTextChange,
+    SlideTextDiff,
+    TextChangeReport,
     TypedSlide,
+    TypedSlidesReview,
 )
 from app.services.carousel_asset_service import CarouselAssetService
 from app.services.carousel_export_service import CarouselExportService
@@ -39,6 +45,10 @@ from app.services.storage_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_text(value: str | None) -> str:
+    return " ".join((value or "").split())
 
 
 class CarouselJobService:
@@ -72,6 +82,89 @@ class CarouselJobService:
         if hasattr(model_cls, "model_validate"):
             return model_cls.model_validate(raw)
         return TypeAdapter(model_cls).validate_python(raw)
+
+    def _report_from_slide_lists(self, before: list[ApprovalSlide], after: list[ApprovalSlide]) -> TextChangeReport:
+        before_map = {item.id: item for item in before}
+        after_map = {item.id: item for item in after}
+        ordered_ids = list(before_map.keys()) + [sid for sid in after_map.keys() if sid not in before_map]
+        slide_diffs: list[SlideTextDiff] = []
+        for slide_id in ordered_ids:
+            src = before_map.get(slide_id)
+            dst = after_map.get(slide_id)
+            if src is None or dst is None:
+                continue
+            changes: list[SlideTextChange] = []
+            fields = [
+                ("title", src.title, dst.title),
+                ("cta", src.cta, dst.cta),
+            ]
+            for field_name, old, new in fields:
+                exact = (old or "") != (new or "")
+                normalized = _normalize_text(old) != _normalize_text(new)
+                if exact:
+                    changes.append(
+                        SlideTextChange(
+                            field=field_name,
+                            before=old,
+                            after=new,
+                            exact_changed=exact,
+                            normalized_changed=normalized,
+                        )
+                    )
+            max_len = max(len(src.bullets), len(dst.bullets))
+            for idx in range(max_len):
+                old = src.bullets[idx] if idx < len(src.bullets) else None
+                new = dst.bullets[idx] if idx < len(dst.bullets) else None
+                exact = (old or "") != (new or "")
+                normalized = _normalize_text(old) != _normalize_text(new)
+                if exact:
+                    changes.append(
+                        SlideTextChange(
+                            field=f"bullet_{idx + 1}",
+                            before=old,
+                            after=new,
+                            exact_changed=exact,
+                            normalized_changed=normalized,
+                        )
+                    )
+            if changes:
+                slide_diffs.append(SlideTextDiff(slide_id=slide_id, changes=changes))
+        change_count = sum(len(item.changes) for item in slide_diffs)
+        return TextChangeReport(
+            has_changes=change_count > 0,
+            change_count=change_count,
+            slides=slide_diffs,
+            overflow_warnings=[],
+        )
+
+    def _typed_to_approval_slides(self, typed: list[TypedSlide]) -> list[ApprovalSlide]:
+        return [
+            ApprovalSlide(
+                id=item.id,
+                title=item.title_block.text,
+                bullets=[block.text for block in item.bullet_blocks],
+                emphasis_words=item.emphasis_spans[:12],
+                cta=item.cta,
+            )
+            for item in typed
+        ]
+
+    def _merge_text_reports(self, base: TextChangeReport | None, extra: TextChangeReport | None) -> TextChangeReport | None:
+        if base is None and extra is None:
+            return None
+        if base is None:
+            return extra
+        if extra is None:
+            return base
+        merged_slides = base.slides + extra.slides
+        merged_overflow = base.overflow_warnings + extra.overflow_warnings
+        merged_count = sum(len(item.changes) for item in merged_slides)
+        return TextChangeReport(
+            has_changes=(merged_count > 0) or bool(merged_overflow),
+            change_count=merged_count,
+            slides=merged_slides,
+            overflow_warnings=merged_overflow,
+        )
 
     def create_job(self, payload: CarouselCreateRequest, assets: ReferenceAssets, *, job_id: str | None = None) -> CarouselJobResponse:
         job_id = job_id or f"carousel_{uuid.uuid4().hex[:12]}"
@@ -112,18 +205,25 @@ class CarouselJobService:
                 user_text=payload.user_text,
             )
             logger.info("carousel.job.draft: draft slides ready job_id=%s count=%s", job_id, len(draft_slides))
-            typed_slides = self.text_service.compress_to_typed_slides(
-                lang=config.lang,
-                slide_count=config.slide_count,
-                source_slides=draft_slides,
-            )
+            has_user_text = bool((payload.user_text or "").strip())
+            if has_user_text:
+                typed_slides = self.text_service.draft_to_typed_slides(source_slides=draft_slides, preserve_text=True)
+            else:
+                typed_slides = self.text_service.compress_to_typed_slides(
+                    lang=config.lang,
+                    slide_count=config.slide_count,
+                    source_slides=draft_slides,
+                )
             logger.info("carousel.job.draft: typed slides ready job_id=%s count=%s", job_id, len(typed_slides))
             save_job_model(state.paths, "typed_slides_for_llm_review.json", typed_slides)
-            review = self.text_service.make_diverse_typed_slides(
-                topic=payload.topic,
-                lang=config.lang,
-                typed_slides=typed_slides,
-            )
+            if has_user_text:
+                review = TypedSlidesReview(typed_slides_checked=typed_slides, issues_fixed=[], remaining_risks=[])
+            else:
+                review = self.text_service.make_diverse_typed_slides(
+                    topic=payload.topic,
+                    lang=config.lang,
+                    typed_slides=typed_slides,
+                )
             logger.info(
                 "carousel.job.draft: review complete job_id=%s fixed=%s risks=%s",
                 job_id,
@@ -142,12 +242,26 @@ class CarouselJobService:
             save_job_model(state.paths, "typed_slides_checked.json", review)
             save_job_model(state.paths, "text_slides_final.json", review.typed_slides_checked)
             save_job_model(state.paths, "approval_payload.json", approval_payload)
+            text_change_report = None
+            if has_user_text:
+                baseline_slides = self.text_service.build_user_text_baseline_approval_slides(
+                    user_text=payload.user_text or "",
+                    lang=config.lang,
+                    slide_count=config.slide_count,
+                )
+                text_change_report = self._report_from_slide_lists(baseline_slides, approval_payload.slides)
+                save_job_model(state.paths, "text_change_report.json", text_change_report)
 
             state.status = "draft_ready"
             state.current_step = "approval_required"
             save_job_status(state)
             logger.info("carousel.job.draft: completed job_id=%s status=%s", job_id, state.status)
-            return CarouselDraftResponse(job_id=job_id, status=state.status, approval_payload=approval_payload)
+            return CarouselDraftResponse(
+                job_id=job_id,
+                status=state.status,
+                approval_payload=approval_payload,
+                text_change_report=text_change_report,
+            )
         except Exception as exc:
             state.status = "failed"
             state.current_step = "draft_failed"
@@ -161,17 +275,29 @@ class CarouselJobService:
         logger.info("carousel.job.approve: start job_id=%s slides=%s", job_id, len(request.slides))
         base_payload = self._load_required_model(os.path.join(state.paths.intermediate_dir, "approval_payload.json"), ApprovalPayload)
         merged_payload = base_payload.model_copy(update={"slides": request.slides})
-        typed_slides = self.text_service.approval_to_typed_slides(merged_payload)
+        config = self._load_required_model(os.path.join(state.paths.intermediate_dir, "job_config.json"), CarouselJobConfig)
+        typed_slides = self.text_service.approval_to_typed_slides(merged_payload, preserve_text=config.has_user_text)
+        typed_approval = self._typed_to_approval_slides(typed_slides)
+        base_report = self._report_from_slide_lists(merged_payload.slides, typed_approval)
+        saved_report = self._load_optional_model(os.path.join(state.paths.intermediate_dir, "text_change_report.json"), TextChangeReport)
+        text_change_report = self._merge_text_reports(saved_report, base_report)
 
         save_job_model(state.paths, "approval_payload.json", merged_payload)
         save_job_model(state.paths, "approval_submit_slides.json", request.slides)
         save_job_model(state.paths, "approved_slides.json", typed_slides)
+        if text_change_report is not None:
+            save_job_model(state.paths, "text_change_report.json", text_change_report)
 
         state.status = "approved"
         state.current_step = "approved"
         save_job_status(state)
         logger.info("carousel.job.approve: completed job_id=%s approved_slides=%s", job_id, len(typed_slides))
-        return CarouselApproveResponse(job_id=job_id, status=state.status, typed_slides=typed_slides)
+        return CarouselApproveResponse(
+            job_id=job_id,
+            status=state.status,
+            typed_slides=typed_slides,
+            text_change_report=text_change_report,
+        )
 
     def _render_once(
         self,
@@ -220,6 +346,9 @@ class CarouselJobService:
         render_results = []
         debug_paths_rel: list[str] = []
         total_slides = len(slides)
+        hero_slide_indices = {idx for idx in config.style_vars.hero_slide_indices if isinstance(idx, int) and idx >= 1}
+        if not hero_slide_indices:
+            hero_slide_indices = {1}
         for idx, slide in enumerate(slides, start=1):
             layout = choose_layout_template(
                 layout_templates,
@@ -246,7 +375,11 @@ class CarouselJobService:
                     design_tokens=design_tokens,
                     font_plan=font_plan,
                     background_path=asset_manifest.get("background_path"),
-                    subject_image_path=asset_manifest.get("subject_cutout_path") if idx == 1 else None,
+                    subject_image_path=(
+                        asset_manifest.get("subject_cutout_path")
+                        if config.style_vars.hero_enabled and idx in hero_slide_indices
+                        else None
+                    ),
                     illustration_paths=(
                         []
                         if idx == total_slides and not config.style_vars.allow_illustration_on_last_slide
@@ -372,12 +505,31 @@ class CarouselJobService:
             save_job_model(state.paths, "asset_manifest.json", asset_manifest)
             save_job_model(state.paths, "qa_report.json", qa_report)
             save_job_model(state.paths, "outputs.json", outputs, bucket="exports")
+            saved_report = self._load_optional_model(os.path.join(state.paths.intermediate_dir, "text_change_report.json"), TextChangeReport)
+            overflow_warnings: list[OverflowWarning] = []
+            for render_item in render_results:
+                overflow_warnings.extend(render_item.overflow_warnings)
+            text_change_report = saved_report or TextChangeReport()
+            if overflow_warnings:
+                text_change_report = text_change_report.model_copy(
+                    update={
+                        "overflow_warnings": overflow_warnings,
+                        "has_changes": text_change_report.has_changes or bool(overflow_warnings),
+                    }
+                )
+            save_job_model(state.paths, "text_change_report.json", text_change_report)
 
             state.status = "completed"
             state.current_step = "completed"
             save_job_status(state)
             logger.info("carousel.job.render: completed job_id=%s", job_id)
-            return CarouselRenderResponse(job_id=job_id, status=state.status, outputs=outputs, qa_report=qa_report)
+            return CarouselRenderResponse(
+                job_id=job_id,
+                status=state.status,
+                outputs=outputs,
+                qa_report=qa_report,
+                text_change_report=text_change_report,
+            )
         except Exception as exc:
             state.status = "failed"
             state.current_step = "render_failed"
@@ -394,6 +546,7 @@ class CarouselJobService:
         approval_payload = self._load_optional_model(os.path.join(state.paths.intermediate_dir, "approval_payload.json"), ApprovalPayload)
         outputs = self._load_optional_model(os.path.join(state.paths.exports_dir, "outputs.json"), CarouselOutput)
         qa_report = self._load_optional_model(os.path.join(state.paths.intermediate_dir, "qa_report.json"), QaReport)
+        text_change_report = self._load_optional_model(os.path.join(state.paths.intermediate_dir, "text_change_report.json"), TextChangeReport)
         asset_manifest = read_json_if_exists(os.path.join(state.paths.intermediate_dir, "asset_manifest.json")) or {}
         approved_raw = read_json_if_exists(os.path.join(state.paths.intermediate_dir, "approved_slides.json")) or []
         approved_slides = [TypedSlide.model_validate(item) for item in approved_raw]
@@ -406,4 +559,5 @@ class CarouselJobService:
             asset_manifest=asset_manifest,
             outputs=outputs,
             qa_report=qa_report,
+            text_change_report=text_change_report,
         )

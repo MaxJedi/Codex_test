@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>FABRIC — Instagram Carousel Builder</title>
+  <title>FABRIC — генератор каруселей Instagram</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -254,66 +254,131 @@
       color: var(--muted);
       word-break: break-all;
     }
+    .font-preview-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 10px 0 12px;
+    }
+    @media (max-width: 900px) {
+      .font-preview-grid { grid-template-columns: 1fr; }
+    }
+    .font-preview-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(2, 6, 23, 0.35);
+      min-height: 88px;
+    }
+    .font-preview-card .preview-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .font-preview-sample {
+      font-size: 22px;
+      line-height: 1.2;
+      color: var(--text);
+      word-break: break-word;
+    }
+    .text-change-alert {
+      margin-top: 10px;
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      background: rgba(248, 113, 113, 0.08);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: none;
+    }
+    .text-change-alert .summary {
+      font-size: 13px;
+      color: #fecaca;
+    }
+    .text-change-details {
+      margin-top: 10px;
+      display: none;
+      gap: 10px;
+    }
+    .text-change-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: rgba(2, 6, 23, 0.4);
+      font-size: 12px;
+    }
+    .text-change-item b {
+      color: #fca5a5;
+    }
+    .text-before, .text-after {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-top: 4px;
+      color: var(--text);
+    }
+    .text-before { opacity: 0.85; }
+    .text-after { color: #bbf7d0; }
   </style>
 </head>
 <body>
   <div class="page">
     <div class="hero">
       <div>
-        <h1>Instagram Carousel Builder</h1>
-        <p>Загрузите референсы, задайте тему или свой текст, отредактируйте слайды на обязательном approval-этапе и получите готовый пакет PNG/JPG для Instagram feed 1080×1350.</p>
+        <h1>Генератор каруселей Instagram</h1>
+        <p>Загрузите референсы стиля, задайте тему или свой текст, отредактируйте слайды на обязательном этапе согласования и получите готовый пакет PNG/JPG для ленты Instagram 1080×1350.</p>
       </div>
-      <div class="badge" id="jobBadge">Job not created</div>
+      <div class="badge" id="jobBadge">Задача не создана</div>
     </div>
 
     <div class="grid">
       <div class="card">
-        <h2>1. Input</h2>
+        <h2>1. Ввод данных</h2>
         <div class="row">
           <div class="field">
-            <label for="topic">Topic</label>
+            <label for="topic">Тема</label>
             <input id="topic" type="text" placeholder="Например: как перестать откладывать задачи" />
           </div>
           <div class="field">
-            <label for="lang">Language</label>
+            <label for="lang">Язык</label>
             <select id="lang">
-              <option value="auto">auto</option>
-              <option value="ru" selected>ru</option>
-              <option value="en">en</option>
+              <option value="auto">Авто</option>
+              <option value="ru" selected>Русский</option>
+              <option value="en">Английский</option>
             </select>
           </div>
           <div class="field">
-            <label for="slideCount">Slides</label>
+            <label for="slideCount">Слайдов</label>
             <input id="slideCount" type="number" min="1" max="20" value="7" />
           </div>
           <div class="field">
-            <label for="exportFormat">Export</label>
+            <label for="exportFormat">Экспорт</label>
             <select id="exportFormat">
-              <option value="png" selected>png</option>
-              <option value="jpg">jpg</option>
+              <option value="png" selected>PNG</option>
+              <option value="jpg">JPG</option>
             </select>
           </div>
         </div>
 
         <div class="field">
-          <label for="userText">User Text (optional)</label>
-          <textarea id="userText" placeholder="Если у вас уже есть готовый текст карусели, вставьте его сюда. Иначе текст будет сгенерирован по topic."></textarea>
+          <label for="userText">Свой текст (необязательно)</label>
+          <textarea id="userText" placeholder="Если текст карусели уже готов, вставьте его сюда. Иначе текст будет сгенерирован по теме."></textarea>
         </div>
 
         <div class="hr"></div>
 
         <div class="row">
           <div class="field">
-            <label for="refStyleImages">Style References (1-5)</label>
+            <label for="refStyleImages">Референсы стиля (1–5)</label>
             <input id="refStyleImages" type="file" accept="image/*" multiple />
           </div>
           <div class="field">
-            <label for="subjectImage">Subject Image</label>
+            <label for="subjectImage">Изображение субъекта</label>
             <input id="subjectImage" type="file" accept="image/*" />
           </div>
         </div>
         <div class="field">
-          <label for="brandAssets">Brand Assets</label>
+          <label for="brandAssets">Брендовые ассеты</label>
           <input id="brandAssets" type="file" multiple />
         </div>
 
@@ -321,63 +386,59 @@
 
         <div class="row">
           <div class="field">
-            <label for="layoutPreset">Layout Preset</label>
-            <select id="layoutPreset">
-              <option value="hero_right" selected>hero_right</option>
-              <option value="hero_left">hero_left</option>
-              <option value="text_only">text_only</option>
-              <option value="cards_grid">cards_grid</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="heroEnabled">Hero Enabled</label>
+            <label for="heroEnabled">Блок героя</label>
             <select id="heroEnabled">
-              <option value="true" selected>true</option>
-              <option value="false">false</option>
+              <option value="true" selected>Включён</option>
+              <option value="false">Выключен</option>
             </select>
           </div>
           <div class="field">
-            <label for="heroSide">Hero Side</label>
+            <label for="heroSide">Сторона героя</label>
             <select id="heroSide">
-              <option value="right" selected>right</option>
-              <option value="left">left</option>
+              <option value="right" selected>Справа</option>
+              <option value="left">Слева</option>
             </select>
           </div>
-        </div>
-
-        <div class="row">
           <div class="field">
-            <label for="colorBg">Background</label>
-            <input id="colorBg" type="color" value="#050816" />
-          </div>
-          <div class="field">
-            <label for="colorText">Text</label>
-            <input id="colorText" type="color" value="#F8FAFC" />
-          </div>
-          <div class="field">
-            <label for="colorAccent">Accent</label>
-            <input id="colorAccent" type="color" value="#39FF88" />
-          </div>
-          <div class="field">
-            <label for="colorAccent2">Accent 2</label>
-            <input id="colorAccent2" type="color" value="#38BDF8" />
+            <label for="heroSlides">Слайды героя</label>
+            <input id="heroSlides" type="text" placeholder="1 или 1,3,5 или 1-3 (пусто = только 1-й)" />
           </div>
         </div>
 
+        <div class="hr"></div>
+
         <div class="row">
           <div class="field">
-            <label for="fontH1Size">H1 Size</label>
-            <input id="fontH1Size" type="number" min="24" max="180" value="84" />
+            <label for="fontH1Family">Шрифт заголовка</label>
+            <select id="fontH1Family"></select>
           </div>
           <div class="field">
-            <label for="fontBodySize">Body Size</label>
-            <input id="fontBodySize" type="number" min="16" max="96" value="40" />
+            <label for="fontSubtitleFamily">Шрифт подзаголовка / CTA</label>
+            <select id="fontSubtitleFamily"></select>
           </div>
           <div class="field">
-            <label for="fontCaptionSize">Caption Size</label>
-            <input id="fontCaptionSize" type="number" min="14" max="80" value="32" />
+            <label for="fontBodyFamily">Шрифт основного текста</label>
+            <select id="fontBodyFamily"></select>
           </div>
         </div>
+
+        <div class="font-preview-grid">
+          <div class="font-preview-card">
+            <div class="preview-label">Заголовок</div>
+            <div id="fontPreviewH1" class="font-preview-sample">Карусель Instagram</div>
+          </div>
+          <div class="font-preview-card">
+            <div class="preview-label">Подзаголовок / CTA</div>
+            <div id="fontPreviewSubtitle" class="font-preview-sample">Сохраните и поделитесь</div>
+          </div>
+          <div class="font-preview-card">
+            <div class="preview-label">Основной текст</div>
+            <div id="fontPreviewBody" class="font-preview-sample">Первый пункт • второй пункт</div>
+          </div>
+        </div>
+        <p class="muted">
+          Шрифты из папки <code>fonts/</code>. «Любой» — первый доступный файл.
+        </p>
 
         <div class="toggle-row">
           <label for="textCardOutlineEnabled">
@@ -386,32 +447,39 @@
           </label>
           <label for="allowIllustrationOnLastSlide">
             <input id="allowIllustrationOnLastSlide" type="checkbox" />
-            Разрешить ассет на завершающем слайде
+            Разрешить иллюстрацию на последнем слайде
           </label>
         </div>
 
         <div class="btn-row">
-          <button id="generateBtn">Create Job + Generate Draft</button>
-          <button id="refreshBtn" class="secondary" type="button">Refresh Job Data</button>
+          <button id="generateBtn">Создать задачу и черновик</button>
+          <button id="refreshBtn" class="secondary" type="button">Обновить данные</button>
         </div>
         <div class="status" id="inputStatus"></div>
         <div class="meta" id="jobMeta"></div>
       </div>
 
       <div class="card">
-        <h2>2. Approval</h2>
-        <div class="muted">Этот шаг обязателен: после генерации текста вы можете отредактировать заголовки, буллеты и CTA перед рендером.</div>
+        <h2>2. Согласование</h2>
+        <div class="muted">Этот шаг обязателен: после генерации текста можно отредактировать заголовки, буллеты и CTA перед рендером.</div>
         <div class="btn-row">
-          <button id="approveBtn" class="secondary" type="button" disabled>Approve Edited Text</button>
-          <button id="renderBtn" type="button" disabled>Render Carousel</button>
+          <button id="approveBtn" class="secondary" type="button" disabled>Подтвердить текст</button>
+          <button id="renderBtn" type="button" disabled>Отрендерить карусель</button>
         </div>
         <div class="status" id="approvalStatus"></div>
+        <div class="text-change-alert" id="textChangeAlert">
+          <div class="summary" id="textChangeSummary"></div>
+          <div class="btn-row" style="margin-top:8px;">
+            <button id="toggleDiffBtn" class="secondary" type="button">Показать различия</button>
+          </div>
+          <div class="text-change-details" id="textChangeDetails"></div>
+        </div>
         <div class="slides" id="approvalSlides"></div>
       </div>
     </div>
 
     <div class="card">
-      <h2>3. Outputs</h2>
+      <h2>3. Результат</h2>
       <div class="status" id="renderStatus"></div>
       <div class="downloads" id="downloads"></div>
       <div class="preview-grid" id="previewGrid"></div>
@@ -425,6 +493,12 @@
       approvalPayload: null,
       approved: false,
       sessionId: null,
+      textChangeReport: null,
+      diffVisible: false,
+      fonts: [],
+      autoValue: 'AUTO',
+      autoLabel: 'Любой',
+      loadedFontFaces: new Set(),
     };
 
     const els = {
@@ -437,11 +511,29 @@
       previewGrid: document.getElementById('previewGrid'),
       downloads: document.getElementById('downloads'),
       jobSpecInfo: document.getElementById('jobSpecInfo'),
+      textChangeAlert: document.getElementById('textChangeAlert'),
+      textChangeSummary: document.getElementById('textChangeSummary'),
+      textChangeDetails: document.getElementById('textChangeDetails'),
+      toggleDiffBtn: document.getElementById('toggleDiffBtn'),
       generateBtn: document.getElementById('generateBtn'),
       approveBtn: document.getElementById('approveBtn'),
       renderBtn: document.getElementById('renderBtn'),
       refreshBtn: document.getElementById('refreshBtn'),
     };
+
+    const JOB_STATUS_RU = {
+      draft: 'черновик',
+      pending_approval: 'ожидает согласования',
+      approved: 'подтверждено',
+      rendering: 'рендер',
+      completed: 'готово',
+      failed: 'ошибка',
+    };
+
+    function jobStatusLabel(status) {
+      if (!status) return '';
+      return JOB_STATUS_RU[status] || status;
+    }
 
     function setStatus(el, message, isError = false) {
       el.textContent = message || '';
@@ -449,7 +541,7 @@
     }
 
     function setJobBadge() {
-      els.jobBadge.textContent = state.jobId ? `Job ${state.jobId}` : 'Job not created';
+      els.jobBadge.textContent = state.jobId ? `Задача ${state.jobId}` : 'Задача не создана';
     }
 
     function ensureSessionId() {
@@ -463,27 +555,180 @@
       return generated;
     }
 
+    function parseHeroSlides(value) {
+      const raw = (value || '').trim();
+      if (!raw) return [1];
+      const result = new Set();
+      raw.split(',').map(token => token.trim()).filter(Boolean).forEach(token => {
+        if (token.includes('-')) {
+          const [startRaw, endRaw] = token.split('-', 2).map(v => Number(v.trim()));
+          if (Number.isInteger(startRaw) && Number.isInteger(endRaw)) {
+            const start = Math.max(1, Math.min(startRaw, endRaw));
+            const end = Math.max(1, Math.max(startRaw, endRaw));
+            for (let i = start; i <= end; i += 1) result.add(i);
+          }
+          return;
+        }
+        const one = Number(token);
+        if (Number.isInteger(one) && one >= 1) result.add(one);
+      });
+      return result.size ? Array.from(result).sort((a, b) => a - b) : [1];
+    }
+
     function collectStyleVars() {
+      const heroEnabled = document.getElementById('heroEnabled').value === 'true';
+      const heroSide = document.getElementById('heroSide').value;
       return {
         export_format: document.getElementById('exportFormat').value,
-        layout_preset: document.getElementById('layoutPreset').value,
-        hero_enabled: document.getElementById('heroEnabled').value === 'true',
-        hero_side: document.getElementById('heroSide').value,
-        color_bg: document.getElementById('colorBg').value,
-        color_text_main: document.getElementById('colorText').value,
-        color_accent: document.getElementById('colorAccent').value,
-        color_accent_2: document.getElementById('colorAccent2').value,
-        font_h1_size: Number(document.getElementById('fontH1Size').value || 84),
-        font_body_size: Number(document.getElementById('fontBodySize').value || 40),
-        font_caption_size: Number(document.getElementById('fontCaptionSize').value || 32),
+        layout_preset: heroEnabled ? (heroSide === 'left' ? 'hero_left' : 'hero_right') : 'text_only',
+        hero_enabled: heroEnabled,
+        hero_side: heroSide,
+        hero_slide_indices: parseHeroSlides(document.getElementById('heroSlides').value),
+        color_bg: '#050816',
+        color_text_main: '#F8FAFC',
+        color_accent: '#39FF88',
+        color_accent_2: '#38BDF8',
+        font_h1_family: document.getElementById('fontH1Family').value,
+        font_subtitle_family: document.getElementById('fontSubtitleFamily').value,
+        font_body_family: document.getElementById('fontBodyFamily').value,
+        font_h1_size: 84,
+        font_body_size: 40,
+        font_caption_size: 32,
         text_card_outline_enabled: document.getElementById('textCardOutlineEnabled').checked,
         allow_illustration_on_last_slide: document.getElementById('allowIllustrationOnLastSlide').checked,
       };
     }
 
+    function fontByName(name) {
+      if (!name || name === state.autoValue) return null;
+      return state.fonts.find(item => item.name === name) || null;
+    }
+
+    function ensureFontFace(fontItem) {
+      if (!fontItem || state.loadedFontFaces.has(fontItem.id)) return;
+      const style = document.createElement('style');
+      style.textContent = `
+        @font-face {
+          font-family: "${fontItem.name.replace(/"/g, '\\"')}";
+          src: url("${fontItem.url}");
+        }
+      `;
+      document.head.appendChild(style);
+      state.loadedFontFaces.add(fontItem.id);
+    }
+
+    function previewFontFamily(selectId) {
+      const value = document.getElementById(selectId).value;
+      if (!value || value === state.autoValue) return 'inherit';
+      const font = fontByName(value);
+      if (!font) return 'inherit';
+      ensureFontFace(font);
+      return `"${font.name.replace(/"/g, '\\"')}", sans-serif`;
+    }
+
+    function updateFontPreviews() {
+      document.getElementById('fontPreviewH1').style.fontFamily = previewFontFamily('fontH1Family');
+      document.getElementById('fontPreviewSubtitle').style.fontFamily = previewFontFamily('fontSubtitleFamily');
+      document.getElementById('fontPreviewBody').style.fontFamily = previewFontFamily('fontBodyFamily');
+    }
+
+    function populateFontSelect(selectId, selectedValue) {
+      const select = document.getElementById(selectId);
+      select.innerHTML = '';
+      const autoOption = document.createElement('option');
+      autoOption.value = state.autoValue;
+      autoOption.textContent = state.autoLabel;
+      select.appendChild(autoOption);
+      state.fonts.forEach(font => {
+        const option = document.createElement('option');
+        option.value = font.name;
+        option.textContent = font.name;
+        select.appendChild(option);
+      });
+      const hasSelected = selectedValue && Array.from(select.options).some(option => option.value === selectedValue);
+      select.value = hasSelected ? selectedValue : state.autoValue;
+    }
+
+    function populateFontSelects(selected = {}) {
+      populateFontSelect('fontH1Family', selected.font_h1_family);
+      populateFontSelect('fontSubtitleFamily', selected.font_subtitle_family);
+      populateFontSelect('fontBodyFamily', selected.font_body_family);
+      updateFontPreviews();
+    }
+
+    async function loadCarouselFonts() {
+      const res = await fetch('/content/carousel/fonts');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Не удалось загрузить список шрифтов');
+      state.fonts = data.fonts || [];
+      state.autoValue = data.auto_value || 'AUTO';
+      state.autoLabel = data.auto_label || 'Любой';
+      state.fonts.forEach(ensureFontFace);
+      populateFontSelects();
+    }
+
+    function bindFontControls() {
+      ['fontH1Family', 'fontSubtitleFamily', 'fontBodyFamily'].forEach(id => {
+        document.getElementById(id).addEventListener('change', updateFontPreviews);
+      });
+    }
+
     function appendFiles(formData, key, input) {
       const files = Array.from(input.files || []);
       files.forEach(file => formData.append(key, file));
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function renderTextChangeReport(report) {
+      state.textChangeReport = report || null;
+      const changeCount = report?.change_count || 0;
+      const overflowCount = (report?.overflow_warnings || []).length;
+      const hasAny = Boolean(changeCount || overflowCount);
+      if (!hasAny) {
+        els.textChangeAlert.style.display = 'none';
+        els.textChangeDetails.style.display = 'none';
+        els.textChangeDetails.innerHTML = '';
+        state.diffVisible = false;
+        return;
+      }
+      const parts = [];
+      if (changeCount > 0) parts.push(`изменений текста: ${changeCount}`);
+      if (overflowCount > 0) parts.push(`рисков переполнения: ${overflowCount}`);
+      els.textChangeSummary.textContent = `Внимание: обнаружены правки/риски — ${parts.join(', ')}.`;
+      els.textChangeAlert.style.display = 'block';
+      const sections = [];
+      (report.slides || []).forEach(slide => {
+        slide.changes.forEach(change => {
+          sections.push(`
+            <div class="text-change-item">
+              <b>${escapeHtml(slide.slide_id)} · ${escapeHtml(change.field)}</b>
+              <div class="text-before">Было: ${escapeHtml(change.before || '')}</div>
+              <div class="text-after">Стало: ${escapeHtml(change.after || '')}</div>
+            </div>
+          `);
+        });
+      });
+      (report.overflow_warnings || []).forEach(item => {
+        sections.push(`
+          <div class="text-change-item">
+            <b>${escapeHtml(item.slide_id)} · ${escapeHtml(item.block_role)} · overflow</b>
+            <div class="text-before">Исходный: ${escapeHtml(item.original_text || '')}</div>
+            <div class="text-after">Рендер: ${escapeHtml(item.rendered_text || '')}</div>
+            <div class="muted">Размер: ${escapeHtml(item.fit_size)} (min ${escapeHtml(item.min_allowed_size)})</div>
+          </div>
+        `);
+      });
+      els.textChangeDetails.innerHTML = sections.join('');
+      els.textChangeDetails.style.display = state.diffVisible ? 'block' : 'none';
+      els.toggleDiffBtn.textContent = state.diffVisible ? 'Скрыть различия' : 'Показать различия';
     }
 
     function renderApprovalSlides(payload) {
@@ -497,17 +742,17 @@
         wrapper.className = 'slide-editor';
         wrapper.dataset.slideId = slide.id;
         wrapper.innerHTML = `
-          <h3>Slide ${String(index + 1).padStart(2, '0')}</h3>
+          <h3>Слайд ${String(index + 1).padStart(2, '0')}</h3>
           <div class="field">
-            <label>Title</label>
+            <label>Заголовок</label>
             <textarea class="slide-title">${slide.title || ''}</textarea>
           </div>
           <div class="field">
-            <label>Bullets (one per line)</label>
+            <label>Буллеты (по одному на строку)</label>
             <textarea class="slide-bullets">${(slide.bullets || []).join('\n')}</textarea>
           </div>
           <div class="field">
-            <label>Emphasis Words (comma separated)</label>
+            <label>Акцентные слова (через запятую)</label>
             <input class="slide-emphasis" type="text" value="${(slide.emphasis_words || []).join(', ')}" />
           </div>
           <div class="field">
@@ -533,11 +778,11 @@
       els.jobMeta.innerHTML = '';
       if (!config) return;
       const entries = [
-        `canvas ${config.canvas.w}×${config.canvas.h}`,
-        `${config.slide_count} slides`,
-        `lang ${config.lang}`,
-        `${(assets?.ref_style_images || []).length} refs`,
-        assets?.subject_image ? 'subject yes' : 'subject no',
+        `холст ${config.canvas.w}×${config.canvas.h}`,
+        `${config.slide_count} слайдов`,
+        `язык: ${config.lang}`,
+        `референсов: ${(assets?.ref_style_images || []).length}`,
+        assets?.subject_image ? 'субъект: да' : 'субъект: нет',
       ];
       entries.forEach(text => {
         const item = document.createElement('span');
@@ -556,16 +801,16 @@
         const card = document.createElement('div');
         card.className = 'preview-item';
         card.innerHTML = `
-          <img src="${item.url}" alt="Slide ${index + 1}" loading="lazy" />
-          <div style="margin-top:8px;"><a href="${item.url}" target="_blank">Open slide ${index + 1}</a></div>
+          <img src="${item.url}" alt="Слайд ${index + 1}" loading="lazy" />
+          <div style="margin-top:8px;"><a href="${item.url}" target="_blank">Открыть слайд ${index + 1}</a></div>
         `;
         els.previewGrid.appendChild(card);
       });
 
       [
-        ['Preview strip', outputs.preview_strip_url],
-        ['Job spec', outputs.job_spec_url],
-        ['ZIP package', outputs.zip_url],
+        ['Превью-лента', outputs.preview_strip_url],
+        ['Спецификация', outputs.job_spec_url],
+        ['ZIP-архив', outputs.zip_url],
       ].forEach(([label, url]) => {
         if (!url) return;
         const link = document.createElement('a');
@@ -576,31 +821,35 @@
       });
 
       if (outputs.job_spec_path) {
-        els.jobSpecInfo.textContent = `job_id=${jobId} | job_spec=${outputs.job_spec_path}`;
+        els.jobSpecInfo.textContent = `задача=${jobId} | спецификация=${outputs.job_spec_path}`;
       }
     }
 
     async function refreshJob() {
       if (!state.jobId) {
-        setStatus(els.inputStatus, 'Сначала создайте job.', true);
+        setStatus(els.inputStatus, 'Сначала создайте задачу.', true);
         return;
       }
       const res = await fetch(`/content/carousel/${state.jobId}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Не удалось загрузить job');
+      if (!res.ok) throw new Error(data.detail || 'Не удалось загрузить задачу');
       renderMeta(data.config, data.assets);
+      if (data.config?.style_vars) {
+        populateFontSelects(data.config.style_vars);
+      }
+      renderTextChangeReport(data.text_change_report);
       state.approvalPayload = data.approval_payload || null;
       renderApprovalSlides(state.approvalPayload);
       renderOutputs(state.jobId, data.outputs);
       state.approved = data.job?.status === 'approved' || data.job?.status === 'completed';
       els.approveBtn.disabled = !state.approvalPayload;
       els.renderBtn.disabled = !state.approved && data.job?.status !== 'completed';
-      setStatus(els.renderStatus, data.job?.status ? `Status: ${data.job.status}` : '');
+      setStatus(els.renderStatus, data.job?.status ? `Статус: ${jobStatusLabel(data.job.status)}` : '');
     }
 
     async function createJobAndDraft() {
       els.generateBtn.disabled = true;
-      setStatus(els.inputStatus, 'Создаю job и генерирую draft...');
+      setStatus(els.inputStatus, 'Создаю задачу и генерирую черновик...');
       try {
         const formData = new FormData();
         formData.append('topic', document.getElementById('topic').value.trim());
@@ -621,7 +870,7 @@
           body: formData,
         });
         const createData = await createRes.json();
-        if (!createRes.ok) throw new Error(createData.detail || 'Не удалось создать job');
+        if (!createRes.ok) throw new Error(createData.detail || 'Не удалось создать задачу');
 
         state.jobId = createData.job_id;
         setJobBadge();
@@ -629,15 +878,16 @@
 
         const draftRes = await fetch(`/content/carousel/${state.jobId}/draft`, { method: 'POST' });
         const draftData = await draftRes.json();
-        if (!draftRes.ok) throw new Error(draftData.detail || 'Не удалось сгенерировать draft');
+        if (!draftRes.ok) throw new Error(draftData.detail || 'Не удалось сгенерировать черновик');
 
         state.approvalPayload = draftData.approval_payload;
+        renderTextChangeReport(draftData.text_change_report);
         renderApprovalSlides(state.approvalPayload);
         state.approved = false;
         els.approveBtn.disabled = false;
         els.renderBtn.disabled = true;
-        setStatus(els.inputStatus, `Draft готов для job ${state.jobId}`);
-        setStatus(els.approvalStatus, 'Проверьте тексты, затем нажмите Approve Edited Text.');
+        setStatus(els.inputStatus, `Черновик готов: ${state.jobId}`);
+        setStatus(els.approvalStatus, 'Проверьте тексты и нажмите «Подтвердить текст».');
       } catch (error) {
         setStatus(els.inputStatus, error.message || String(error), true);
       } finally {
@@ -658,9 +908,10 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Не удалось подтвердить тексты');
+        renderTextChangeReport(data.text_change_report);
         state.approved = true;
         els.renderBtn.disabled = false;
-        setStatus(els.approvalStatus, `Approved ${data.typed_slides.length} slides. Можно рендерить.`);
+        setStatus(els.approvalStatus, `Подтверждено слайдов: ${data.typed_slides.length}. Можно рендерить.`);
       } catch (error) {
         setStatus(els.approvalStatus, error.message || String(error), true);
       } finally {
@@ -677,8 +928,9 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Не удалось отрендерить карусель');
         renderOutputs(state.jobId, data.outputs);
+        renderTextChangeReport(data.text_change_report);
         const issues = (data.qa_report?.slides || []).reduce((acc, slide) => acc + (slide.issues?.length || 0), 0);
-        setStatus(els.renderStatus, `Render complete. QA issues: ${issues}`);
+        setStatus(els.renderStatus, `Рендер завершён. Замечаний QA: ${issues}`);
       } catch (error) {
         setStatus(els.renderStatus, error.message || String(error), true);
       } finally {
@@ -689,10 +941,15 @@
     els.generateBtn.addEventListener('click', createJobAndDraft);
     els.approveBtn.addEventListener('click', approveSlides);
     els.renderBtn.addEventListener('click', renderCarousel);
+    els.toggleDiffBtn.addEventListener('click', () => {
+      state.diffVisible = !state.diffVisible;
+      els.textChangeDetails.style.display = state.diffVisible ? 'block' : 'none';
+      els.toggleDiffBtn.textContent = state.diffVisible ? 'Скрыть различия' : 'Показать различия';
+    });
     els.refreshBtn.addEventListener('click', async () => {
       try {
         await refreshJob();
-        setStatus(els.inputStatus, 'Job refreshed.');
+        setStatus(els.inputStatus, 'Данные задачи обновлены.');
       } catch (error) {
         setStatus(els.inputStatus, error.message || String(error), true);
       }
@@ -709,6 +966,10 @@
 
     state.sessionId = ensureSessionId();
     setJobBadge();
+    bindFontControls();
+    loadCarouselFonts().catch(error => {
+      setStatus(els.inputStatus, error.message || String(error), true);
+    });
   </script>
 </body>
 </html>

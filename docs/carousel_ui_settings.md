@@ -35,7 +35,7 @@
 
 ## Типографика
 
-- `font_h1_family`, `font_body_family` - семейства шрифтов.
+- `font_h1_family`, `font_subtitle_family`, `font_body_family` — семейства шрифтов (`AUTO` = «Любой», иначе имя из папки `fonts/`).
 - `font_h1_weight`, `font_body_weight` - насыщенность шрифтов.
 - `font_h1_size` - стартовый размер заголовка.
 - `font_body_size` - стартовый размер буллетов/основного текста.

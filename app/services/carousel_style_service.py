@@ -79,8 +79,9 @@ class CarouselStyleService:
                 cta_bar=cta_bar,
             ),
             fonts=FontTokens(
-                h1="Noto Sans" if config.lang == "ru" else "AUTO",
-                body="DejaVu Sans" if config.lang == "ru" else "AUTO",
+                h1=config.style_vars.font_h1_family,
+                subtitle=config.style_vars.font_subtitle_family,
+                body=config.style_vars.font_body_family,
             ),
             effects=EffectTokens(
                 glow=config.style_vars.text_glow_intensity,
@@ -108,7 +109,12 @@ class CarouselStyleService:
 
     def build_font_plan(self, config: CarouselJobConfig, design_tokens: DesignTokens):
         plan = build_font_plan(config.lang, design_tokens, get_available_fonts())
-        logger.info("carousel.style.fonts: primary=%s fallback=%s", plan.primary_font, plan.fallback_font)
+        logger.info(
+            "carousel.style.fonts: primary=%s subtitle=%s fallback=%s",
+            plan.primary_font,
+            plan.subtitle_font,
+            plan.fallback_font,
+        )
         return plan
 
     def build_style_bundle(self, config: CarouselJobConfig, assets: ReferenceAssets):

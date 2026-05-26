@@ -7,6 +7,7 @@ import random
 from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from app.schemas.carousel import (
+    OverflowWarning,
     BBox,
     CarouselJobConfig,
     DesignTokens,
@@ -222,12 +223,28 @@ class CarouselRenderService:
             wrapped = "\n".join(lines)
             width, height = _measure_text(draw, wrapped, font, spacing=spacing, stroke_width=stroke_width)
             if width <= bbox.w and height <= bbox.h:
-                return {"font": font, "size": size, "text": wrapped, "width": width, "height": height}
+                return {
+                    "font": font,
+                    "size": size,
+                    "text": wrapped,
+                    "width": width,
+                    "height": height,
+                    "overflow_risk": False,
+                    "min_allowed_size": min_size,
+                }
         font = _pil_font(font_path, min_size)
         lines = _wrap_text(draw, block.text, font, max_width=max_width, stroke_width=stroke_width)[: block.max_lines]
         wrapped = "\n".join(lines)
         width, height = _measure_text(draw, wrapped, font, spacing=spacing, stroke_width=stroke_width)
-        return {"font": font, "size": min_size, "text": wrapped, "width": min(width, bbox.w), "height": min(height, bbox.h)}
+        return {
+            "font": font,
+            "size": min_size,
+            "text": wrapped,
+            "width": min(width, bbox.w),
+            "height": min(height, bbox.h),
+            "overflow_risk": True,
+            "min_allowed_size": min_size,
+        }
 
     def _fit_bullets(
         self,
@@ -258,7 +275,14 @@ class CarouselRenderService:
                 max_width = max(max_width, width)
                 wrapped_items.append(text)
             if fits and max_width <= bbox.w and total_height <= bbox.h:
-                return {"font": font, "size": size, "items": wrapped_items, "height": total_height}
+                return {
+                    "font": font,
+                    "size": size,
+                    "items": wrapped_items,
+                    "height": total_height,
+                    "overflow_risk": False,
+                    "min_allowed_size": min_size,
+                }
         font = _pil_font(font_path, min_size)
         wrapped_items = []
         total_height = 0
@@ -268,7 +292,14 @@ class CarouselRenderService:
             _, height = _measure_text(draw, text, font, spacing=spacing, stroke_width=stroke_width)
             total_height += height + spacing + 16
             wrapped_items.append(text)
-        return {"font": font, "size": min_size, "items": wrapped_items, "height": min(total_height, bbox.h)}
+        return {
+            "font": font,
+            "size": min_size,
+            "items": wrapped_items,
+            "height": min(total_height, bbox.h),
+            "overflow_risk": True,
+            "min_allowed_size": min_size,
+        }
 
     def _draw_gradient_background(
         self,
@@ -509,6 +540,7 @@ class CarouselRenderService:
             layer_bg_path = None
 
         layer_map = SlideLayerMap(slide_id=slide.id)
+        overflow_warnings: list[OverflowWarning] = []
         layer_map.layers.append(LayerPlacement(name="background", path=layer_bg_path))
 
         if layout.hero_box and subject_image_path and os.path.exists(subject_image_path):
@@ -565,6 +597,18 @@ class CarouselRenderService:
                 meta={"font_size": title_fit["size"]},
             )
         )
+        if title_fit.get("overflow_risk"):
+            overflow_warnings.append(
+                OverflowWarning(
+                    slide_id=slide.id,
+                    block_role="title",
+                    original_text=slide.title_block.text,
+                    rendered_text=title_fit["text"].replace("\n", " "),
+                    fit_size=int(title_fit["size"]),
+                    min_allowed_size=int(title_fit.get("min_allowed_size", 0)),
+                    box=layout.title_box,
+                )
+            )
 
         bullet_fit = self._fit_bullets(
             draw,
@@ -632,6 +676,20 @@ class CarouselRenderService:
                 )
             )
             current_y += height + bullet_spacing
+        if bullet_fit.get("overflow_risk"):
+            for idx, block in enumerate(slide.bullet_blocks, start=1):
+                rendered = bullet_fit["items"][idx - 1] if idx - 1 < len(bullet_fit["items"]) else ""
+                overflow_warnings.append(
+                    OverflowWarning(
+                        slide_id=slide.id,
+                        block_role="bullet",
+                        original_text=block.text,
+                        rendered_text=rendered.replace("\n", " "),
+                        fit_size=int(bullet_fit["size"]),
+                        min_allowed_size=int(bullet_fit.get("min_allowed_size", 0)),
+                        box=layout.bullet_box,
+                    )
+                )
 
         if slide.cta and layout.cta_box:
             self._draw_card(
@@ -647,7 +705,7 @@ class CarouselRenderService:
                 draw,
                 cta_block,
                 layout.cta_box,
-                font_path=font_plan.fallback_font,
+                font_path=font_plan.subtitle_font or font_plan.fallback_font,
                 start_size=config.style_vars.font_caption_size,
                 min_size=max(18, config.style_vars.font_caption_size // 2),
                 spacing=8,
@@ -681,6 +739,18 @@ class CarouselRenderService:
                 )
             )
             logger.info("carousel.render.slide: cta fit slide_id=%s font_size=%s", slide.id, cta_fit["size"])
+            if cta_fit.get("overflow_risk"):
+                overflow_warnings.append(
+                    OverflowWarning(
+                        slide_id=slide.id,
+                        block_role="cta",
+                        original_text=slide.cta,
+                        rendered_text=cta_fit["text"].replace("\n", " "),
+                        fit_size=int(cta_fit["size"]),
+                        min_allowed_size=int(cta_fit.get("min_allowed_size", 0)),
+                        box=layout.cta_box,
+                    )
+                )
 
         if illustration_paths and slide.slide_type != "cta":
             illustration_path = next((path for path in illustration_paths if os.path.exists(path)), None)
@@ -721,4 +791,5 @@ class CarouselRenderService:
             slide_path=output_path,
             layer_map=layer_map,
             template_name=layout.name,
+            overflow_warnings=overflow_warnings,
         )

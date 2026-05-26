@@ -26,6 +26,7 @@ from app.schemas import (
     StyleVars,
 )
 from app.services.carousel_job_service import CarouselJobService
+from app.services.font_registry import list_carousel_font_options, resolve_carousel_font_file
 from app.services.text_overlay_service import TextOverlayService
 from app.services.storage_service import (
     can_delete_carousel_job,
@@ -372,6 +373,27 @@ async def topics_overlay_batch_upload(
         ))
 
     return TopicsOverlayResponse(source_path=input_path, results=results)
+
+
+@router.get("/carousel/fonts")
+def carousel_list_fonts():
+    fonts = list_carousel_font_options()
+    logger.info("carousel.fonts: listed count=%s", len(fonts))
+    return {
+        "fonts": [item.model_dump() for item in fonts],
+        "auto_label": "Любой",
+        "auto_value": "AUTO",
+    }
+
+
+@router.get("/carousel/fonts/{filename}")
+def carousel_font_file(filename: str):
+    font_path = resolve_carousel_font_file(filename)
+    if not font_path:
+        logger.warning("carousel.fonts: file not found filename=%s", filename)
+        raise HTTPException(404, "Font file not found")
+    media_type = mimetypes.guess_type(font_path)[0] or "application/octet-stream"
+    return FileResponse(font_path, media_type=media_type, filename=os.path.basename(font_path))
 
 
 @router.post("/carousel/jobs")

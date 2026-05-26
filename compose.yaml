@@ -9,5 +9,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./app:/app/app
 
 

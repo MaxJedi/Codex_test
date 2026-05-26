@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     IMAGES_DIRNAME: str = Field(default='images', env='IMAGES_DIRNAME')
     VIDEO_DEFAULT_RATIO: str = Field(default='1080:1920', env='VIDEO_DEFAULT_RATIO')
     REELS_DEFAULT_COUNT: int = Field(default=1, env='REELS_DEFAULT_COUNT')
+    CAROUSEL_FONTS_DIR: str = Field(default='fonts', env='CAROUSEL_FONTS_DIR')
     DRAW_TEXT_FONT_PATH: str = Field(default='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', env='DRAW_TEXT_FONT_PATH')
     CAROUSEL_FONT_FALLBACK_PATHS: str = Field(
         default='/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf,'

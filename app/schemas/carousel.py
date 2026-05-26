@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 CarouselLang = Literal["ru", "en", "auto"]
 CarouselOutputFormat = Literal["png", "jpg"]
 HighlightStyle = Literal["fill", "underline", "glow"]
 HeroSide = Literal["left", "right"]
-FontFamily = Literal["AUTO", "Noto Sans", "DejaVu Sans"]
+HeroLayout = Literal["off", "left", "right"]
+AUTO_FONT_NAME = "AUTO"
 LayoutPresetName = Literal["hero_left", "hero_right", "text_only", "cards_grid"]
 SlideType = Literal["cover", "content", "cta", "hook", "explanation", "mistakes", "examples", "action_steps", "checklist", "summary"]
 TextRole = Literal["title", "bullet", "caption", "cta", "subtitle"]
@@ -45,8 +46,9 @@ class StyleVars(BaseModel):
     color_cta_bar: str = "#0F172A"
     highlight_style: HighlightStyle = "glow"
 
-    font_h1_family: FontFamily = "AUTO"
-    font_body_family: FontFamily = "AUTO"
+    font_h1_family: str = AUTO_FONT_NAME
+    font_subtitle_family: str = AUTO_FONT_NAME
+    font_body_family: str = AUTO_FONT_NAME
     font_h1_weight: int = Field(default=700, ge=300, le=900)
     font_body_weight: int = Field(default=500, ge=300, le=900)
     font_h1_size: int = Field(default=84, ge=24, le=180)
@@ -69,9 +71,13 @@ class StyleVars(BaseModel):
     fx_neon_blur: int = Field(default=18, ge=0, le=100)
     fx_neon_line_width: int = Field(default=5, ge=1, le=40)
 
+    hero_layout: HeroLayout = "off"
+    hero_slides: list[int] = Field(default_factory=lambda: [1], max_length=20)
+
     layout_preset: LayoutPresetName = "hero_right"
     hero_enabled: bool = True
     hero_side: HeroSide = "right"
+    hero_slide_indices: list[int] = Field(default_factory=lambda: [1], max_length=20)
     hero_scale: float = Field(default=1.0, ge=0.3, le=2.0)
     card_radius: int = Field(default=28, ge=0, le=120)
     card_shadow: int = Field(default=28, ge=0, le=120)
@@ -81,6 +87,26 @@ class StyleVars(BaseModel):
     cta_enabled: bool = True
     cta_text: str = "Сохраните карусель и возвращайтесь"
     cta_position: str = Field(default="bottom", pattern="^(top|bottom)$")
+
+    @model_validator(mode="after")
+    def _sync_hero_fields(self) -> "StyleVars":
+        normalized_slides = sorted({idx for idx in self.hero_slides if 1 <= idx <= 20})
+        self.hero_slides = normalized_slides or [1]
+
+        if self.hero_layout == "off" and (self.hero_enabled or self.layout_preset in {"hero_left", "hero_right"}):
+            if self.layout_preset in {"hero_left", "hero_right"}:
+                self.hero_layout = "left" if self.layout_preset == "hero_left" else "right"
+            else:
+                self.hero_layout = "left" if self.hero_side == "left" else "right"
+
+        if self.hero_layout == "off":
+            self.hero_enabled = False
+            self.layout_preset = "text_only"
+        else:
+            self.hero_enabled = True
+            self.hero_side = "left" if self.hero_layout == "left" else "right"
+            self.layout_preset = "hero_left" if self.hero_layout == "left" else "hero_right"
+        return self
 
 
 class CarouselJobConfig(BaseModel):
@@ -139,10 +165,10 @@ class ReferenceAssets(BaseModel):
 
 class DraftSlide(BaseModel):
     slide_type: SlideType = "content"
-    title: str = Field(..., max_length=70)
+    title: str = Field(..., max_length=1000)
     bullets: list[str] = Field(default_factory=list, min_length=0, max_length=6)
     emphasis_words: list[str] = Field(default_factory=list, max_length=12)
-    cta: str | None = Field(default=None, max_length=90)
+    cta: str | None = Field(default=None, max_length=1000)
 
 
 class TextBlock(BaseModel):
@@ -157,7 +183,7 @@ class TypedSlide(BaseModel):
     title_block: TextBlock
     bullet_blocks: list[TextBlock] = Field(default_factory=list, max_length=6)
     emphasis_spans: list[str] = Field(default_factory=list, max_length=12)
-    cta: str | None = Field(default=None, max_length=90)
+    cta: str | None = Field(default=None, max_length=1000)
 
 
 class TypedSlidesReview(BaseModel):
@@ -168,10 +194,10 @@ class TypedSlidesReview(BaseModel):
 
 class ApprovalSlide(BaseModel):
     id: str
-    title: str = Field(..., max_length=120)
+    title: str = Field(..., max_length=1000)
     bullets: list[str] = Field(default_factory=list, max_length=6)
     emphasis_words: list[str] = Field(default_factory=list, max_length=12)
-    cta: str | None = Field(default=None, max_length=120)
+    cta: str | None = Field(default=None, max_length=1000)
 
 
 class EditRules(BaseModel):
@@ -202,8 +228,16 @@ class PaletteTokens(BaseModel):
     cta_bar: str
 
 
+class CarouselFontOption(BaseModel):
+    id: str
+    name: str
+    filename: str
+    url: str
+
+
 class FontTokens(BaseModel):
     h1: str
+    subtitle: str = AUTO_FONT_NAME
     body: str
 
 
@@ -245,6 +279,7 @@ class LayoutTemplate(BaseModel):
 
 class FontPlan(BaseModel):
     primary_font: str
+    subtitle_font: str = ""
     fallback_font: str
     weights: dict[str, int] = Field(default_factory=dict)
     supports: dict[str, bool] = Field(default_factory=dict)
@@ -267,6 +302,37 @@ class SlideRenderResult(BaseModel):
     slide_path: str
     layer_map: SlideLayerMap
     template_name: LayoutPresetName
+    overflow_warnings: list["OverflowWarning"] = Field(default_factory=list)
+
+
+class SlideTextChange(BaseModel):
+    field: str
+    before: str | None = None
+    after: str | None = None
+    exact_changed: bool = False
+    normalized_changed: bool = False
+
+
+class SlideTextDiff(BaseModel):
+    slide_id: str
+    changes: list[SlideTextChange] = Field(default_factory=list)
+
+
+class OverflowWarning(BaseModel):
+    slide_id: str
+    block_role: Literal["title", "bullet", "cta"]
+    original_text: str
+    rendered_text: str
+    fit_size: int
+    min_allowed_size: int
+    box: BBox
+
+
+class TextChangeReport(BaseModel):
+    has_changes: bool = False
+    change_count: int = 0
+    slides: list[SlideTextDiff] = Field(default_factory=list)
+    overflow_warnings: list[OverflowWarning] = Field(default_factory=list)
 
 
 class QaIssue(BaseModel):
@@ -311,12 +377,14 @@ class CarouselDraftResponse(BaseModel):
     job_id: str
     status: str
     approval_payload: ApprovalPayload
+    text_change_report: TextChangeReport | None = None
 
 
 class CarouselApproveResponse(BaseModel):
     job_id: str
     status: str
     typed_slides: list[TypedSlide] = Field(default_factory=list)
+    text_change_report: TextChangeReport | None = None
 
 
 class CarouselOutput(BaseModel):
@@ -331,6 +399,7 @@ class CarouselRenderResponse(BaseModel):
     status: str
     outputs: CarouselOutput
     qa_report: QaReport
+    text_change_report: TextChangeReport | None = None
 
 
 class CarouselJobDetailResponse(BaseModel):
@@ -342,3 +411,4 @@ class CarouselJobDetailResponse(BaseModel):
     asset_manifest: dict[str, Any] = Field(default_factory=dict)
     outputs: CarouselOutput | None = None
     qa_report: QaReport | None = None
+    text_change_report: TextChangeReport | None = None

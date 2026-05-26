@@ -53,3 +53,30 @@ def build_self_check_prompt(*, typed_slides: Any) -> str:
         "Никаких пояснений вне JSON.\n"
         f"INPUT(JSON): {json.dumps({'typed_slides': typed_slides}, ensure_ascii=False)}"
     )
+
+
+def build_user_text_structure_prompt(*, lang: str, slide_count: int, chunks: list[str]) -> str:
+    return (
+        "SYSTEM: Ты анализатор структуры текста карусели. "
+        "Тебе дан plain text, уже разбитый на chunks. "
+        "Верни JSON с массивом slide_types длины slide_count, без изменения текста chunks. "
+        "slide_type только из: cover|content|cta|hook|explanation|mistakes|examples|action_steps|checklist|summary. "
+        "Используй cover для первого и cta для последнего, если не уверен. "
+        "Никаких других полей.\n"
+        f"INPUT(JSON): {json.dumps({'lang': lang, 'slide_count': slide_count, 'chunks': chunks}, ensure_ascii=False)}"
+    )
+
+
+def build_user_text_draft_prompt(*, lang: str, slide_count: int, user_text: str) -> str:
+    return (
+        "SYSTEM: Ты редактор структуры пользовательского plain text для карусели. "
+        "Верни JSON draft_slides[] длиной slide_count со схемой "
+        "{slide_type, title, bullets[], emphasis_words[], cta}. "
+        "Сначала попытайся сохранить формулировки максимально близко к исходнику: "
+        "разрешено только разбиение по смысловым блокам, выделение заголовков и буллетов. "
+        "Не придумывай новые факты. "
+        "Если сохранить структуру без правок невозможно — допускаются минимальные изменения текста для соответствия структуре. "
+        "slide_type: первый cover, последний cta или summary/cta, остальные content-like. "
+        "Верни только JSON.\n"
+        f"INPUT(JSON): {json.dumps({'lang': lang, 'slide_count': slide_count, 'user_text': user_text}, ensure_ascii=False)}"
+    )

@@ -35,11 +35,15 @@ from app.schemas.carousel import (
     SlideLayerMap,
     SlideQaReport,
     SlideRenderResult,
+    SlideTextChange,
+    SlideTextDiff,
     StoredAsset,
     StyleVars,
     TextBlock,
+    TextChangeReport,
     TypedSlide,
     TypedSlidesReview,
+    OverflowWarning,
 )
 
 __all__ = [
@@ -53,5 +57,6 @@ __all__ = [
     "CarouselRenderResponse", "DesignTokens", "DraftSlide", "FontPlan",
     "JobSpec", "LayoutTemplate", "QaReport", "ReferenceAssets",
     "SafeMargins", "SlideLayerMap", "SlideQaReport", "SlideRenderResult",
-    "StoredAsset", "StyleVars", "TextBlock", "TypedSlide", "TypedSlidesReview",
+    "SlideTextChange", "SlideTextDiff", "StoredAsset", "StyleVars", "TextBlock", "TextChangeReport",
+    "TypedSlide", "TypedSlidesReview", "OverflowWarning",
 ]

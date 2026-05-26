@@ -24,6 +24,8 @@ from app.services.prompts.carousel_text_prompts import (
     build_compaction_prompt,
     build_draft_generation_prompt,
     build_self_check_prompt,
+    build_user_text_draft_prompt,
+    build_user_text_structure_prompt,
 )
 
 
@@ -89,6 +91,35 @@ def _split_user_text(user_text: str, slide_count: int) -> list[str]:
     return (built or chunks)[:slide_count]
 
 
+def _auto_slide_count_from_user_text(user_text: str) -> int:
+    text = (user_text or "").strip()
+    if not text:
+        return 1
+
+    paragraph_chunks = [chunk.strip() for chunk in re.split(r"\n{2,}", text) if chunk.strip()]
+    if paragraph_chunks:
+        if len(paragraph_chunks) == 1:
+            lines = [line.strip() for line in paragraph_chunks[0].splitlines() if line.strip()]
+            bullet_lines = [line for line in lines if re.match(r"^[-•*]\s+", line)]
+            if len(lines) >= 4 or len(bullet_lines) >= 2:
+                return 2
+        return max(1, min(20, len(paragraph_chunks)))
+
+    line_chunks = [line.strip() for line in text.splitlines() if line.strip()]
+    if line_chunks:
+        bullet_lines = [line for line in line_chunks if re.match(r"^[-•*]\s+", line)]
+        if len(line_chunks) >= 4 or len(bullet_lines) >= 2:
+            return 2
+        return max(1, min(20, len(line_chunks)))
+
+    words = text.split()
+    if not words:
+        return 1
+    # Roughly one short slide per 35-55 words.
+    estimated = max(1, round(len(words) / 45))
+    return max(1, min(20, estimated))
+
+
 def _normalize_text_signature(value: str) -> str:
     value = (value or "").lower()
     value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
@@ -146,6 +177,29 @@ def _normalize_llm_typed_item(item: object, *, index: int, slide_count: int) -> 
         "bullet_blocks": normalized_bullet_blocks[:6],
         "emphasis_spans": [str(item_text) for item_text in (item.get("emphasis_spans") or [])][:12],
         "cta": str(item.get("cta")).strip() if item.get("cta") is not None else None,
+    }
+
+
+def _normalize_llm_draft_item(item: object, *, index: int, slide_count: int) -> dict:
+    if not isinstance(item, dict):
+        return {}
+    allowed = {"cover", "content", "cta", "hook", "explanation", "mistakes", "examples", "action_steps", "checklist", "summary"}
+    raw_type = str(item.get("slide_type") or "").strip().lower()
+    if "/" in raw_type:
+        raw_type = raw_type.split("/", 1)[0].strip()
+    slide_type = raw_type if raw_type in allowed else ("cover" if index == 1 else ("cta" if index == slide_count else "content"))
+    bullets_raw = item.get("bullets") if isinstance(item.get("bullets"), list) else []
+    bullets = [str(value).strip() for value in bullets_raw if str(value).strip()][:6]
+    emphasis_raw = item.get("emphasis_words") if isinstance(item.get("emphasis_words"), list) else []
+    emphasis_words = [str(value).strip() for value in emphasis_raw if str(value).strip()][:12]
+    cta_raw = item.get("cta")
+    cta = str(cta_raw).strip() if cta_raw is not None else None
+    return {
+        "slide_type": slide_type,
+        "title": str(item.get("title", "")).strip(),
+        "bullets": bullets,
+        "emphasis_words": emphasis_words,
+        "cta": cta,
     }
 
 
@@ -290,26 +344,30 @@ def _fallback_draft_slides(topic: str, lang: str, slide_count: int) -> list[Draf
     return _build_structured_draft_slides(topic=topic, lang=lang, slide_count=slide_count)
 
 
-def _draft_from_user_text(user_text: str, lang: str, slide_count: int) -> list[DraftSlide]:
+def _draft_from_user_text(user_text: str, lang: str, slide_count: int, *, slide_roles: list[str] | None = None) -> list[DraftSlide]:
     chunks = _split_user_text(user_text, slide_count)
     slides: list[DraftSlide] = []
     for idx in range(slide_count):
         chunk = chunks[idx] if idx < len(chunks) else chunks[-1]
-        lines = [line.strip(" -•") for line in re.split(r"[.\n]", chunk) if line.strip()]
-        title = _clean_line(lines[0] if lines else chunk, max_chars=70)
-        bullets = [_clean_line(line, max_chars=90) for line in lines[1:4]]
-        if not bullets:
-            bullets = [
-                _clean_line(chunk, max_chars=90),
-                "Ключевая мысль без лишних слов" if _coalesce_lang(lang) == "ru" else "One clear take-away",
-            ]
+        lines = [line.strip(" -•\t") for line in chunk.splitlines() if line.strip()]
+        if len(lines) >= 2:
+            title = lines[0]
+            bullets = lines[1:7]
+        else:
+            sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", chunk.strip()) if part.strip()]
+            title = sentences[0] if sentences else chunk.strip()
+            bullets = sentences[1:7]
         slides.append(
             DraftSlide(
-                slide_type="cover" if idx == 0 else ("cta" if idx == slide_count - 1 else "content"),
+                slide_type=(
+                    slide_roles[idx]
+                    if slide_roles and idx < len(slide_roles)
+                    else ("cover" if idx == 0 else ("cta" if idx == slide_count - 1 else "content"))
+                ),
                 title=title,
                 bullets=bullets[:6],
-                emphasis_words=[word for word in title.split()[:2] if len(word) > 3][:4],
-                cta="Сохраните этот разбор" if idx == slide_count - 1 and _coalesce_lang(lang) == "ru" else None,
+                emphasis_words=[],
+                cta=None,
             )
         )
     return slides
@@ -410,6 +468,111 @@ def _enforce_slide_diversity(typed_slides: list[TypedSlide], *, topic: str, lang
 
 
 class CarouselTextService:
+    @staticmethod
+    def _normalize_slide_type(raw: object, *, idx: int, total: int) -> str:
+        allowed = {"cover", "content", "cta", "hook", "explanation", "mistakes", "examples", "action_steps", "checklist", "summary"}
+        value = str(raw or "").strip().lower()
+        if value in allowed:
+            return value
+        return "cover" if idx == 0 else ("cta" if idx == total - 1 else "content")
+
+    def _structure_user_text_roles(self, *, user_text: str, lang: str, slide_count: int) -> list[str]:
+        chunks = _split_user_text(user_text, slide_count)
+        default = ["cover" if i == 0 else ("cta" if i == slide_count - 1 else "content") for i in range(slide_count)]
+        prompt = build_user_text_structure_prompt(lang=_coalesce_lang(lang), slide_count=slide_count, chunks=chunks[:slide_count])
+        try:
+            data = _call_json_llm(GLOBAL_TEXT_SYSTEM_PROMPT, prompt)
+            roles_raw = data.get("slide_types") or data.get("slide_roles") or []
+            roles = [
+                self._normalize_slide_type(item, idx=idx, total=slide_count)
+                for idx, item in enumerate(roles_raw[:slide_count])
+            ]
+            if len(roles) < slide_count:
+                roles.extend(default[len(roles):])
+            return roles
+        except Exception:
+            logger.exception("carousel.text.user_text_roles: llm structuring failed, using defaults")
+            return default
+
+    def generate_draft_slides_from_user_text(self, *, user_text: str, lang: str, slide_count: int) -> list[DraftSlide]:
+        prompt = build_user_text_draft_prompt(
+            lang=_coalesce_lang(lang),
+            slide_count=slide_count,
+            user_text=user_text,
+        )
+        try:
+            data = _call_json_llm(GLOBAL_TEXT_SYSTEM_PROMPT, prompt)
+            items = data.get("draft_slides", [])
+            normalized_items = [
+                _normalize_llm_draft_item(item, index=index, slide_count=slide_count)
+                for index, item in enumerate(items, start=1)
+            ]
+            slides = [DraftSlide.model_validate(item) for item in normalized_items]
+            if len(slides) == slide_count:
+                logger.info("carousel.text.user_text_draft: llm result accepted count=%s", len(slides))
+                return slides
+            logger.warning(
+                "carousel.text.user_text_draft: llm result rejected count=%s expected=%s",
+                len(slides),
+                slide_count,
+            )
+        except Exception:
+            logger.exception("carousel.text.user_text_draft: llm structuring failed, fallback to scripted split")
+        roles = self._structure_user_text_roles(user_text=user_text, lang=lang, slide_count=slide_count)
+        return _draft_from_user_text(user_text, lang, slide_count, slide_roles=roles)
+
+    def draft_to_typed_slides(self, *, source_slides: list[DraftSlide], preserve_text: bool = False) -> list[TypedSlide]:
+        typed: list[TypedSlide] = []
+        for idx, slide in enumerate(source_slides, start=1):
+            title_text = slide.title if preserve_text else _clean_line(slide.title, max_chars=70)
+            bullet_items = slide.bullets[:6]
+            if not preserve_text:
+                bullet_items = [_clean_line(item, max_chars=90) for item in bullet_items]
+            cta_value = slide.cta
+            if cta_value and not preserve_text:
+                cta_value = _clean_line(cta_value, max_chars=90)
+            typed.append(
+                TypedSlide(
+                    id=f"slide_{idx:02d}",
+                    slide_type=slide.slide_type,
+                    title_block=TextBlock(text=title_text, max_lines=3 if slide.slide_type == "cover" else 2, role="title"),
+                    bullet_blocks=[TextBlock(text=item, max_lines=3, role="bullet") for item in bullet_items],
+                    emphasis_spans=([] if preserve_text else slide.emphasis_words[:12]),
+                    cta=cta_value,
+                )
+            )
+        return typed
+
+    def build_user_text_baseline_approval_slides(
+        self,
+        *,
+        user_text: str,
+        lang: str,
+        slide_count: int,
+    ) -> list[ApprovalSlide]:
+        chunks = _split_user_text(user_text, slide_count)
+        slides: list[ApprovalSlide] = []
+        for idx in range(slide_count):
+            chunk = chunks[idx] if idx < len(chunks) else chunks[-1]
+            lines = [line.strip(" \t") for line in chunk.splitlines() if line.strip()]
+            if len(lines) >= 2:
+                title = lines[0]
+                bullets = lines[1:7]
+            else:
+                sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", chunk.strip()) if part.strip()]
+                title = sentences[0] if sentences else chunk.strip()
+                bullets = sentences[1:7]
+            slides.append(
+                ApprovalSlide(
+                    id=f"slide_{idx + 1:02d}",
+                    title=title,
+                    bullets=bullets[:6],
+                    emphasis_words=[],
+                    cta=None,
+                )
+            )
+        return slides
+
     def build_job_config(
         self,
         payload: CarouselCreateRequest,
@@ -418,10 +581,16 @@ class CarouselTextService:
         has_subject_image: bool,
     ) -> CarouselJobConfig:
         style_vars = payload.style_vars
+        has_user_text = bool((payload.user_text or "").strip())
+        resolved_slide_count = (
+            _auto_slide_count_from_user_text(payload.user_text or "")
+            if has_user_text
+            else payload.slide_count
+        )
         config = CarouselJobConfig(
             lang=_coalesce_lang(payload.lang),
-            slide_count=payload.slide_count,
-            has_user_text=bool((payload.user_text or "").strip()),
+            slide_count=resolved_slide_count,
+            has_user_text=has_user_text,
             has_subject_image=has_subject_image,
             ref_count=ref_count,
             output_format=style_vars.export_format,
@@ -449,7 +618,11 @@ class CarouselTextService:
         try:
             data = _call_json_llm(GLOBAL_TEXT_SYSTEM_PROMPT, prompt)
             items = data.get("draft_slides", [])
-            slides = [DraftSlide.model_validate(item) for item in items]
+            normalized_items = [
+                _normalize_llm_draft_item(item, index=index, slide_count=slide_count)
+                for index, item in enumerate(items, start=1)
+            ]
+            slides = [DraftSlide.model_validate(item) for item in normalized_items]
             if len(slides) == slide_count and not _has_low_diversity_draft(slides):
                 logger.info("carousel.text.draft: llm result accepted count=%s", len(slides))
                 return slides
@@ -473,7 +646,11 @@ class CarouselTextService:
     ) -> list[DraftSlide]:
         if user_text and user_text.strip():
             logger.info("carousel.text.draft_source: using user_text slide_count=%s", slide_count)
-            return _draft_from_user_text(user_text, lang, slide_count)
+            return self.generate_draft_slides_from_user_text(
+                user_text=user_text,
+                lang=lang,
+                slide_count=slide_count,
+            )
         logger.info("carousel.text.draft_source: using llm topic=%r", topic)
         return self.generate_draft_slides(topic=topic, lang=lang, slide_count=slide_count)
 
@@ -535,26 +712,33 @@ class CarouselTextService:
         logger.info("carousel.text.approval_payload: built slides=%s", len(payload.slides))
         return payload
 
-    def approval_to_typed_slides(self, approval_payload: ApprovalPayload) -> list[TypedSlide]:
+    def approval_to_typed_slides(self, approval_payload: ApprovalPayload, *, preserve_text: bool = False) -> list[TypedSlide]:
         logger.info("carousel.text.approval_to_typed: start slides=%s", len(approval_payload.slides))
         slides: list[TypedSlide] = []
         total = len(approval_payload.slides)
         for idx, slide in enumerate(approval_payload.slides, start=1):
             slide_type = "cover" if idx == 1 else ("cta" if idx == total else "content")
+            title_text = slide.title if preserve_text else _clean_line(slide.title, max_chars=70)
+            bullet_values = slide.bullets[:6]
+            if not preserve_text:
+                bullet_values = [_clean_line(item, max_chars=90) for item in bullet_values]
+            cta_value = slide.cta
+            if cta_value and not preserve_text:
+                cta_value = _clean_line(cta_value, max_chars=90)
             slides.append(
                 TypedSlide(
                     id=slide.id,
                     slide_type=slide_type,
-                    title_block=TextBlock(text=_clean_line(slide.title, max_chars=70), max_lines=3 if idx == 1 else 2, role="title"),
+                    title_block=TextBlock(text=title_text, max_lines=3 if idx == 1 else 2, role="title"),
                     bullet_blocks=[
-                        TextBlock(text=_clean_line(item, max_chars=90), max_lines=3, role="bullet")
-                        for item in slide.bullets[:6]
+                        TextBlock(text=item, max_lines=3, role="bullet")
+                        for item in bullet_values
                     ],
                     emphasis_spans=slide.emphasis_words[:12],
-                    cta=_clean_line(slide.cta, max_chars=90) if slide.cta else None,
+                    cta=cta_value,
                 )
             )
-        checked = self.self_check_typed_slides(slides).typed_slides_checked
+        checked = slides if preserve_text else self.self_check_typed_slides(slides).typed_slides_checked
         logger.info("carousel.text.approval_to_typed: completed slides=%s", len(checked))
         return checked
 
